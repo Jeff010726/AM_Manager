@@ -1,5 +1,5 @@
 ﻿
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from './api';
 import type {
   Category,
@@ -15,6 +15,7 @@ import type {
 
 type Tab = 'sku' | 'inventory' | 'projects' | 'users';
 type NumInput = '' | number;
+type Toast = { id: number; type: 'ok' | 'error'; text: string };
 
 type ModalType =
   | null
@@ -80,8 +81,8 @@ export function App() {
   const [modal, setModal] = useState<ModalType>(null);
 
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const toastSeqRef = useRef(1);
 
   const [me, setMe] = useState<User | null>(null);
   const [users, setUsers] = useState<User[]>([]);
@@ -144,14 +145,19 @@ export function App() {
   const selectedInventoryBalance = selectedInventoryProductId ? inventoryByProductId.get(selectedInventoryProductId) ?? null : null;
   const selectedProject = selectedProjectId ? projects.find((x) => x.id === selectedProjectId) ?? null : null;
 
+  function removeToast(id: number) {
+    setToasts((prev) => prev.filter((x) => x.id !== id));
+  }
+
+  function pushToast(type: 'ok' | 'error', text: string) {
+    const id = toastSeqRef.current;
+    toastSeqRef.current += 1;
+    setToasts((prev) => [...prev, { id, type, text }].slice(-4));
+    window.setTimeout(() => removeToast(id), 3500);
+  }
+
   function setMsg(type: 'ok' | 'error', text: string) {
-    if (type === 'ok') {
-      setSuccess(text);
-      setError('');
-    } else {
-      setError(text);
-      setSuccess('');
-    }
+    pushToast(type, text);
   }
 
   async function runAction(fn: () => Promise<void>, okText: string, closeModal = true) {
@@ -305,37 +311,39 @@ export function App() {
     setProjectReservations([]);
     setConsumeProjectId('');
     setConsumeProjectReservations([]);
-    setError('');
-    setSuccess('');
+    setToasts([]);
   }
 
   if (!token) {
     return (
-      <div className="auth-wrap">
-        <form className="auth-panel" onSubmit={(e) => {
-          e.preventDefault();
-          void runAction(async () => {
-            const resp = await apiClient.login(loginForm.email.trim(), loginForm.password);
-            localStorage.setItem('am_token', resp.token);
-            apiClient.setToken(resp.token);
-            setToken(resp.token);
-          }, '登录成功', false);
-        }}>
-          <h1>AM 轻量ERP</h1>
-          <p>默认管理员：admin@example.com / admin123</p>
-          <label>邮箱<input value={loginForm.email} onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })} /></label>
-          <label>密码<input type="password" value={loginForm.password} onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })} /></label>
-          <button type="submit" disabled={loading}>登录</button>
-          {error && <div className="msg error">{error}</div>}
-        </form>
-      </div>
+      <>
+        <div className="auth-wrap">
+          <form className="auth-panel" onSubmit={(e) => {
+            e.preventDefault();
+            void runAction(async () => {
+              const resp = await apiClient.login(loginForm.email.trim(), loginForm.password);
+              localStorage.setItem('am_token', resp.token);
+              apiClient.setToken(resp.token);
+              setToken(resp.token);
+            }, '登录成功', false);
+          }}>
+            <h1>AM Manager</h1>
+            <p>默认管理员：admin@example.com / admin123</p>
+            <label>邮箱<input value={loginForm.email} onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })} /></label>
+            <label>密码<input type="password" value={loginForm.password} onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })} /></label>
+            <button type="submit" disabled={loading}>登录</button>
+          </form>
+        </div>
+        <ToastStack toasts={toasts} onClose={removeToast} />
+      </>
     );
   }
 
   return (
-    <div className="layout">
+    <>
+      <div className="layout">
       <aside className="nav">
-        <h2>AM ERP</h2>
+        <h2>AM Manager</h2>
         <p>{me?.name}（{roleLabel(me?.role || '')}）</p>
         <button className={tab === 'sku' ? 'active' : ''} onClick={() => setTab('sku')}>SKU主数据</button>
         <button className={tab === 'inventory' ? 'active' : ''} onClick={() => setTab('inventory')}>库存</button>
@@ -346,9 +354,6 @@ export function App() {
       </aside>
 
       <main className="content">
-        {error && <div className="msg error">{error}</div>}
-        {success && <div className="msg ok">{success}</div>}
-
         {tab === 'sku' && (
           <section className="panel">
             <div className="toolbar">
@@ -792,7 +797,9 @@ export function App() {
           <button type="submit">提交</button>
         </form>
       </Modal>
-    </div>
+      </div>
+      <ToastStack toasts={toasts} onClose={removeToast} />
+    </>
   );
 }
 
@@ -828,6 +835,20 @@ function Modal(props: { open: boolean; title: string; onClose: () => void; child
         </div>
         {children}
       </div>
+    </div>
+  );
+}
+
+function ToastStack(props: { toasts: Toast[]; onClose: (id: number) => void }) {
+  const { toasts, onClose } = props;
+  return (
+    <div className="toast-wrap" aria-live="polite" aria-atomic="true">
+      {toasts.map((item) => (
+        <div key={item.id} className={`toast ${item.type}`}>
+          <span>{item.text}</span>
+          <button className="toast-close" onClick={() => onClose(item.id)}>关闭</button>
+        </div>
+      ))}
     </div>
   );
 }
