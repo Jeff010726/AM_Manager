@@ -214,6 +214,76 @@ app.delete('/api/users/:id', async (c) => {
   return c.json({ success: true, data: { id: userId, status: 'inactive' } });
 });
 
+app.delete('/api/users/:id/hard', async (c) => {
+  const guard = requireAdmin(c);
+  if (guard) return guard;
+
+  const userId = Number(c.req.param('id'));
+  if (!Number.isInteger(userId) || userId <= 0) return apiError(c, 400, 'INVALID_PARAMS', 'Invalid user id');
+
+  const authUser = c.get('authUser') as AuthUser;
+  if (authUser.id === userId) return apiError(c, 400, 'INVALID_OPERATION', 'Cannot hard-delete current login user');
+
+  const user = await c.env.DB.prepare('SELECT id, email, name, role, status FROM users WHERE id = ?').bind(userId).first<{
+    id: number;
+    email: string;
+    name: string;
+    role: 'admin' | 'visitor';
+    status: 'active' | 'inactive';
+  }>();
+  if (!user) return apiError(c, 404, 'NOT_FOUND', 'User not found');
+
+  if (user.role === 'admin' && user.status === 'active') {
+    const row = await c.env.DB.prepare('SELECT COUNT(1) AS cnt FROM users WHERE role = ? AND status = ? AND id != ?')
+      .bind('admin', 'active', userId)
+      .first<{ cnt: number }>();
+    const adminLeft = Number(row?.cnt || 0);
+    if (adminLeft < 1) return apiError(c, 409, 'LAST_ADMIN', 'At least one active admin must remain');
+  }
+
+  const ownedProjects = await c.env.DB.prepare('SELECT id FROM projects WHERE owner_user_id = ?').bind(userId).all<{ id: number }>();
+  let deletedProjectCount = 0;
+  for (const row of ownedProjects.results || []) {
+    const projectId = Number(row.id);
+    if (!Number.isInteger(projectId) || projectId <= 0) continue;
+    const removed = await deleteProjectCascade(c, projectId, `Hard delete user ${userId} release`);
+    if (removed) deletedProjectCount += 1;
+  }
+
+  const affectedCommitProjects = await c.env.DB.prepare('SELECT DISTINCT project_id FROM project_commits WHERE author_user_id = ?')
+    .bind(userId)
+    .all<{ project_id: number }>();
+  const commitProjectIds = (affectedCommitProjects.results || [])
+    .map((x) => Number(x.project_id))
+    .filter((x) => Number.isInteger(x) && x > 0);
+  await c.env.DB.prepare('DELETE FROM project_commits WHERE author_user_id = ?').bind(userId).run();
+  for (const projectId of commitProjectIds) {
+    const latest = await c.env.DB.prepare('SELECT status_to FROM project_commits WHERE project_id = ? ORDER BY seq_no DESC LIMIT 1')
+      .bind(projectId)
+      .first<{ status_to: string }>();
+    await c.env.DB.prepare('UPDATE projects SET status = ?, updated_at = ? WHERE id = ?')
+      .bind(latest?.status_to ?? 'planned', now(), projectId)
+      .run();
+  }
+
+  await c.env.DB.prepare('DELETE FROM project_members WHERE user_id = ?').bind(userId).run();
+  await c.env.DB.prepare('DELETE FROM inventory_transactions WHERE actor_user_id = ?').bind(userId).run();
+  await c.env.DB.prepare('DELETE FROM audit_logs WHERE actor_user_id = ?').bind(userId).run();
+  await c.env.DB.prepare('DELETE FROM idempotency_keys WHERE user_id = ?').bind(userId).run();
+  await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(userId).run();
+
+  await writeAudit(c, 'user.hard_delete', 'user', String(userId), user, {
+    deleted_project_count: deletedProjectCount,
+  });
+  return c.json({
+    success: true,
+    data: {
+      id: userId,
+      deleted_project_count: deletedProjectCount,
+    },
+  });
+});
+
 app.get('/api/categories', async (c) => {
   const rows = await c.env.DB.prepare('SELECT id, name, parent_id, created_at, updated_at FROM categories ORDER BY id ASC').all();
   return c.json({ success: true, data: rows.results || [] });
@@ -555,57 +625,8 @@ app.delete('/api/projects/:id', async (c) => {
   const id = Number(c.req.param('id'));
   if (!Number.isInteger(id) || id <= 0) return apiError(c, 400, 'INVALID_PARAMS', 'Invalid project id');
 
-  const before = await c.env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(id).first<{ id: number; project_code: string }>();
+  const before = await deleteProjectCascade(c, id, 'Delete project release');
   if (!before) return apiError(c, 404, 'NOT_FOUND', 'Project not found');
-
-  const releaseRows = await c.env.DB.prepare(
-    `SELECT product_id, SUM(qty - consumed_qty - released_qty) AS release_qty
-     FROM project_reservations
-     WHERE project_id = ?
-     GROUP BY product_id
-     HAVING SUM(qty - consumed_qty - released_qty) > 0`,
-  )
-    .bind(id)
-    .all<{ product_id: number; release_qty: number }>();
-
-  for (const row of releaseRows.results || []) {
-    const productId = Number(row.product_id);
-    const releaseQty = Number(row.release_qty || 0);
-    if (productId <= 0 || releaseQty <= 0) continue;
-
-    await ensureBalanceRow(c.env.DB, productId);
-    await c.env.DB.prepare(
-      `UPDATE inventory_balances
-       SET reserved_qty = CASE WHEN reserved_qty >= ? THEN reserved_qty - ? ELSE 0 END,
-           updated_at = ?
-       WHERE product_id = ?`,
-    )
-      .bind(releaseQty, releaseQty, now(), productId)
-      .run();
-
-    await insertInventoryTx(c, {
-      product_id: productId,
-      operation_type: 'RELEASE',
-      qty: releaseQty,
-      delta_on_hand: 0,
-      delta_in_transit: 0,
-      delta_reserved: -releaseQty,
-      delta_consumed: 0,
-      project_id: null,
-      reservation_id: null,
-      reason: `Delete project release: ${before.project_code}`,
-      idempotency_key: `project-delete-${id}-${productId}-${crypto.randomUUID()}`,
-    });
-  }
-
-  await c.env.DB.prepare('DELETE FROM inventory_transactions WHERE project_id = ?').bind(id).run();
-  await c.env.DB.prepare('DELETE FROM project_consumptions WHERE project_id = ?').bind(id).run();
-  await c.env.DB.prepare('DELETE FROM project_reservations WHERE project_id = ?').bind(id).run();
-  await c.env.DB.prepare('DELETE FROM project_material_plans WHERE project_id = ?').bind(id).run();
-  await c.env.DB.prepare('DELETE FROM project_members WHERE project_id = ?').bind(id).run();
-  await c.env.DB.prepare('DELETE FROM project_commits WHERE project_id = ?').bind(id).run();
-  await c.env.DB.prepare('DELETE FROM projects WHERE id = ?').bind(id).run();
-
   await writeAudit(c, 'project.delete', 'project', String(id), before, null);
   return c.json({ success: true, data: { id } });
 });
@@ -1497,6 +1518,60 @@ async function ensureBalanceRow(db: D1Database, productId: number) {
   )
     .bind(productId, now())
     .run();
+}
+
+async function deleteProjectCascade(c: any, projectId: number, reasonPrefix: string) {
+  const before = await c.env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(projectId).first<{ id: number; project_code: string }>();
+  if (!before) return null;
+
+  const releaseRows = await c.env.DB.prepare(
+    `SELECT product_id, SUM(qty - consumed_qty - released_qty) AS release_qty
+     FROM project_reservations
+     WHERE project_id = ?
+     GROUP BY product_id
+     HAVING SUM(qty - consumed_qty - released_qty) > 0`,
+  )
+    .bind(projectId)
+    .all<{ product_id: number; release_qty: number }>();
+
+  for (const row of releaseRows.results || []) {
+    const productId = Number(row.product_id);
+    const releaseQty = Number(row.release_qty || 0);
+    if (productId <= 0 || releaseQty <= 0) continue;
+
+    await ensureBalanceRow(c.env.DB, productId);
+    await c.env.DB.prepare(
+      `UPDATE inventory_balances
+       SET reserved_qty = CASE WHEN reserved_qty >= ? THEN reserved_qty - ? ELSE 0 END,
+           updated_at = ?
+       WHERE product_id = ?`,
+    )
+      .bind(releaseQty, releaseQty, now(), productId)
+      .run();
+
+    await insertInventoryTx(c, {
+      product_id: productId,
+      operation_type: 'RELEASE',
+      qty: releaseQty,
+      delta_on_hand: 0,
+      delta_in_transit: 0,
+      delta_reserved: -releaseQty,
+      delta_consumed: 0,
+      project_id: null,
+      reservation_id: null,
+      reason: `${reasonPrefix}: ${before.project_code}`,
+      idempotency_key: `project-delete-${projectId}-${productId}-${crypto.randomUUID()}`,
+    });
+  }
+
+  await c.env.DB.prepare('DELETE FROM inventory_transactions WHERE project_id = ?').bind(projectId).run();
+  await c.env.DB.prepare('DELETE FROM project_consumptions WHERE project_id = ?').bind(projectId).run();
+  await c.env.DB.prepare('DELETE FROM project_reservations WHERE project_id = ?').bind(projectId).run();
+  await c.env.DB.prepare('DELETE FROM project_material_plans WHERE project_id = ?').bind(projectId).run();
+  await c.env.DB.prepare('DELETE FROM project_members WHERE project_id = ?').bind(projectId).run();
+  await c.env.DB.prepare('DELETE FROM project_commits WHERE project_id = ?').bind(projectId).run();
+  await c.env.DB.prepare('DELETE FROM projects WHERE id = ?').bind(projectId).run();
+  return before;
 }
 
 async function deleteProductCascade(db: D1Database, productId: number) {

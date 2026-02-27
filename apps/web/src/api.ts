@@ -76,6 +76,12 @@ export class ApiClient {
     });
   }
 
+  hardDeleteUser(userId: number) {
+    return this.request<{ id: number; deleted_project_count: number }>(`/api/users/${userId}/hard`, {
+      method: 'DELETE',
+    });
+  }
+
   listCategories() {
     return this.request<Category[]>('/api/categories');
   }

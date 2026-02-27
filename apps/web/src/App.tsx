@@ -378,6 +378,14 @@ export function App() {
     }, '用户已停用', false);
   }
 
+  async function hardDeleteUser(item: User) {
+    if (!window.confirm(`确认彻底删除用户 ${item.name} 吗？\n该操作不可恢复，会删除此用户所有关联记录（含其负责项目及相关数据），并从用户列表彻底移除。`)) return;
+    await runAction(async () => {
+      await apiClient.hardDeleteUser(item.id);
+      await loadBase();
+    }, '用户已彻底删除', false);
+  }
+
   function openCommitEditor(commit: ProjectCommit) {
     setEditCommitForm({
       commitId: commit.commit_id,
@@ -762,7 +770,7 @@ export function App() {
         {tab === 'users' && isAdmin && (
           <section className="panel">
             <div className="toolbar">
-              <div><h3>用户管理</h3><p className="subtle">删除用户会停用账号并清除登录凭据，历史参与与Commit仍保留。</p></div>
+              <div><h3>用户管理</h3><p className="subtle">支持两种删除：停用账号（保留历史）与彻底删除（完全抹除关联数据）。</p></div>
               <div className="tools"><button onClick={() => setModal('user')}>新增用户</button></div>
             </div>
             <div className="table-wrap">
@@ -772,7 +780,14 @@ export function App() {
                   {users.map((u) => (
                     <tr key={u.id}>
                       <td>{u.id}</td><td>{u.name}</td><td>{u.email}</td><td>{roleLabel(u.role)}</td><td>{u.status}</td>
-                      <td>{u.id !== me?.id ? <button className="text-btn danger" onClick={() => void deleteUser(u)}>删除账号</button> : <span className="muted">当前登录账号</span>}</td>
+                      <td>
+                        {u.id !== me?.id ? (
+                          <>
+                            <button className="text-btn" onClick={() => void deleteUser(u)}>停用账号</button>
+                            <button className="text-btn danger" onClick={() => void hardDeleteUser(u)}>彻底删除</button>
+                          </>
+                        ) : <span className="muted">当前登录账号</span>}
+                      </td>
                     </tr>
                   ))}
                   {users.length === 0 && <tr><td colSpan={6} className="empty-cell">暂无用户数据</td></tr>}
