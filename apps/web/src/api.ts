@@ -2,6 +2,7 @@
   ApiEnvelope,
   Category,
   InventoryItem,
+  InventoryTransaction,
   LoginResponse,
   Product,
   Project,
@@ -153,6 +154,14 @@ export class ApiClient {
 
   listInventorySummary() {
     return this.request<InventoryItem[]>('/api/inventory/summary');
+  }
+
+  listInventoryTransactions(productId?: number, limit = 500) {
+    const parts: string[] = [];
+    if (productId) parts.push(`product_id=${encodeURIComponent(String(productId))}`);
+    if (limit > 0) parts.push(`limit=${encodeURIComponent(String(limit))}`);
+    const query = parts.length ? `?${parts.join('&')}` : '';
+    return this.request<InventoryTransaction[]>(`/api/inventory/transactions${query}`);
   }
 
   reserve(payload: { project_id: number; product_id: number; qty: number; reason?: string }) {

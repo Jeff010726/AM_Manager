@@ -669,17 +669,43 @@ app.get('/api/inventory/summary', async (c) => {
 });
 
 app.get('/api/inventory/transactions', async (c) => {
-  const rows = await c.env.DB.prepare(
+  const productIdRaw = c.req.query('product_id');
+  const limitRaw = c.req.query('limit');
+  let productId: number | null = null;
+  let limit = 500;
+
+  if (productIdRaw !== undefined && productIdRaw !== '') {
+    const parsed = Number(productIdRaw);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      return apiError(c, 400, 'INVALID_PARAMS', 'product_id must be a positive integer');
+    }
+    productId = parsed;
+  }
+
+  if (limitRaw !== undefined && limitRaw !== '') {
+    const parsed = Number(limitRaw);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      return apiError(c, 400, 'INVALID_PARAMS', 'limit must be a positive integer');
+    }
+    limit = Math.min(parsed, 2000);
+  }
+
+  const result = await c.env.DB.prepare(
     `SELECT it.id, it.product_id, p.sku, p.name AS product_name, it.operation_type, it.qty, it.delta_on_hand, it.delta_in_transit,
             it.delta_reserved, it.delta_consumed, it.project_id, it.reservation_id, it.reason, it.actor_user_id,
-            u.name AS actor_name, it.idempotency_key, it.request_id, it.created_at
+            u.name AS actor_name, it.idempotency_key, it.request_id, it.created_at,
+            prj.project_code, prj.project_name
      FROM inventory_transactions it
      JOIN products p ON p.id = it.product_id
      JOIN users u ON u.id = it.actor_user_id
+     LEFT JOIN projects prj ON prj.id = it.project_id
+     WHERE (? IS NULL OR it.product_id = ?)
      ORDER BY it.id DESC
-     LIMIT 500`,
-  ).all();
-  return c.json({ success: true, data: rows.results || [] });
+     LIMIT ?`,
+  )
+    .bind(productId, productId, limit)
+    .all();
+  return c.json({ success: true, data: result.results || [] });
 });
 
 app.get('/api/inventory/balances', async (c) => {

@@ -114,6 +114,29 @@ export type InventoryItem = {
   shortage_qty: number;
 };
 
+export type InventoryTransaction = {
+  id: number;
+  product_id: number;
+  sku: string;
+  product_name: string;
+  operation_type: string;
+  qty: number;
+  delta_on_hand: number;
+  delta_in_transit: number;
+  delta_reserved: number;
+  delta_consumed: number;
+  project_id: number | null;
+  project_code?: string | null;
+  project_name?: string | null;
+  reservation_id: number | null;
+  reason?: string | null;
+  actor_user_id: number;
+  actor_name: string;
+  idempotency_key: string;
+  request_id: string;
+  created_at: string;
+};
+
 export type ApiEnvelope<T> = {
   success: boolean;
   data: T;
