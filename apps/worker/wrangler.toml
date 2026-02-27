@@ -1,0 +1,15 @@
+name = "am-manager-api"
+main = "src/index.ts"
+compatibility_date = "2026-02-27"
+
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "am-manager-db"
+database_id = "f230ffd0-dd0c-4933-98e2-10fb8839db19"
+migrations_dir = "migrations"
+
+[vars]
+CORS_ORIGIN = "*"
