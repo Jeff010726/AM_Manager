@@ -713,10 +713,22 @@ export function App() {
                 </table></div>
 
                 <h4 className="section-title">项目预留库存</h4>
-                <div className="table-wrap"><table><thead><tr><th>预留ID</th><th>SKU</th><th>产品名称</th><th>预留数量</th><th>已消耗</th><th>已释放</th><th>剩余</th><th>状态</th></tr></thead>
+                <div className="table-wrap"><table><thead><tr><th>序号</th><th>系统预留ID</th><th>SKU</th><th>产品名称</th><th>预留数量</th><th>已消耗</th><th>已释放</th><th>剩余</th><th>状态</th></tr></thead>
                   <tbody>
-                    {projectReservations.map((r) => <tr key={r.reservation_id}><td>{r.reservation_id}</td><td>{r.sku}</td><td>{r.product_name}</td><td>{r.qty}</td><td>{r.consumed_qty}</td><td>{r.released_qty}</td><td>{r.remaining_qty}</td><td>{r.status}</td></tr>)}
-                    {projectReservations.length === 0 && <tr><td colSpan={8} className="empty-cell">暂无预留记录</td></tr>}
+                    {projectReservations.map((r, idx) => (
+                      <tr key={r.reservation_id}>
+                        <td>{idx + 1}</td>
+                        <td>{r.reservation_id}</td>
+                        <td>{r.sku}</td>
+                        <td>{r.product_name}</td>
+                        <td>{r.qty}</td>
+                        <td>{r.consumed_qty}</td>
+                        <td>{r.released_qty}</td>
+                        <td>{r.remaining_qty}</td>
+                        <td>{r.status}</td>
+                      </tr>
+                    ))}
+                    {projectReservations.length === 0 && <tr><td colSpan={9} className="empty-cell">暂无预留记录</td></tr>}
                   </tbody>
                 </table></div>
 
@@ -912,7 +924,7 @@ export function App() {
             <option value="">选择项目</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.project_code} / {p.project_name}</option>)}
           </select>
           <select value={releaseForm.reservationId} onChange={(e) => setReleaseForm({ ...releaseForm, reservationId: e.target.value ? Number(e.target.value) : '' })}>
-            <option value="">选择预留记录</option>{releaseProjectReservations.filter((r) => r.remaining_qty > 0).map((r) => <option key={r.reservation_id} value={r.reservation_id}>#{r.reservation_id} / {r.sku} / 剩余{r.remaining_qty}</option>)}
+            <option value="">选择预留记录</option>{releaseProjectReservations.filter((r) => r.remaining_qty > 0).map((r, idx) => <option key={r.reservation_id} value={r.reservation_id}>序号{idx + 1} / ID {r.reservation_id} / {r.sku} / 剩余{r.remaining_qty}</option>)}
           </select>
           <input type="number" placeholder="释放数量" value={releaseForm.qty} onChange={(e) => setReleaseForm({ ...releaseForm, qty: e.target.value ? Number(e.target.value) : '' })} />
           <input placeholder="释放备注" value={releaseForm.reason} onChange={(e) => setReleaseForm({ ...releaseForm, reason: e.target.value })} />
@@ -936,7 +948,7 @@ export function App() {
             <option value="">选择项目</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.project_code} / {p.project_name}</option>)}
           </select>
           <select value={consumeForm.reservationId} onChange={(e) => setConsumeForm({ ...consumeForm, reservationId: e.target.value ? Number(e.target.value) : '' })}>
-            <option value="">选择预留记录</option>{consumeProjectReservations.filter((r) => r.remaining_qty > 0).map((r) => <option key={r.reservation_id} value={r.reservation_id}>#{r.reservation_id} / {r.sku} / 剩余{r.remaining_qty}</option>)}
+            <option value="">选择预留记录</option>{consumeProjectReservations.filter((r) => r.remaining_qty > 0).map((r, idx) => <option key={r.reservation_id} value={r.reservation_id}>序号{idx + 1} / ID {r.reservation_id} / {r.sku} / 剩余{r.remaining_qty}</option>)}
           </select>
           <input type="number" placeholder="消耗数量" value={consumeForm.qty} onChange={(e) => setConsumeForm({ ...consumeForm, qty: e.target.value ? Number(e.target.value) : '' })} />
           <input placeholder="出库备注" value={consumeForm.note} onChange={(e) => setConsumeForm({ ...consumeForm, note: e.target.value })} />
