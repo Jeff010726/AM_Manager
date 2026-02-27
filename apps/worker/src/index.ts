@@ -948,10 +948,10 @@ app.post('/api/inventory/outbound', async (c) => {
     await ensureBalanceRow(c.env.DB, body.product_id);
     const run = await c.env.DB.prepare(
       `UPDATE inventory_balances
-       SET on_hand_qty = on_hand_qty - ?, updated_at = ?
+       SET on_hand_qty = on_hand_qty - ?, consumed_qty = consumed_qty + ?, updated_at = ?
        WHERE product_id = ? AND (on_hand_qty - reserved_qty) >= ?`,
     )
-      .bind(body.qty, now(), body.product_id, body.qty)
+      .bind(body.qty, body.qty, now(), body.product_id, body.qty)
       .run();
     if ((run.meta.changes ?? 0) === 0) return apiError(c, 409, 'INSUFFICIENT_AVAILABLE_STOCK', 'Not enough available stock');
 
@@ -962,7 +962,7 @@ app.post('/api/inventory/outbound', async (c) => {
       delta_on_hand: -body.qty,
       delta_in_transit: 0,
       delta_reserved: 0,
-      delta_consumed: 0,
+      delta_consumed: body.qty,
       project_id: null,
       reservation_id: null,
       reason: body.reason ?? null,

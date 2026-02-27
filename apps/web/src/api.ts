@@ -209,6 +209,13 @@ export class ApiClient {
     });
   }
 
+  outbound(payload: { product_id: number; qty: number; reason?: string }) {
+    return this.request('/api/inventory/outbound', {
+      method: 'POST',
+      body: JSON.stringify({ ...payload, idempotency_key: crypto.randomUUID() }),
+    });
+  }
+
   transitCreate(payload: { product_id: number; qty: number; reason?: string }) {
     return this.request('/api/inventory/transit/create', {
       method: 'POST',
@@ -218,6 +225,13 @@ export class ApiClient {
 
   transitReceive(payload: { product_id: number; qty: number; reason?: string }) {
     return this.request('/api/inventory/transit/receive', {
+      method: 'POST',
+      body: JSON.stringify({ ...payload, idempotency_key: crypto.randomUUID() }),
+    });
+  }
+
+  release(payload: { reservation_id: number; qty: number; reason?: string }) {
+    return this.request('/api/inventory/release', {
       method: 'POST',
       body: JSON.stringify({ ...payload, idempotency_key: crypto.randomUUID() }),
     });

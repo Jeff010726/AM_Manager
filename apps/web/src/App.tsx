@@ -22,9 +22,11 @@ type ModalType =
   | 'category'
   | 'sku'
   | 'inbound'
+  | 'outbound'
   | 'transitCreate'
   | 'transitReceive'
   | 'reserve'
+  | 'release'
   | 'consume'
   | 'project'
   | 'member'
@@ -103,6 +105,8 @@ export function App() {
 
   const [consumeProjectId, setConsumeProjectId] = useState<NumInput>('');
   const [consumeProjectReservations, setConsumeProjectReservations] = useState<ProjectReservation[]>([]);
+  const [releaseProjectId, setReleaseProjectId] = useState<NumInput>('');
+  const [releaseProjectReservations, setReleaseProjectReservations] = useState<ProjectReservation[]>([]);
 
   const [loginForm, setLoginForm] = useState({ email: 'admin@example.com', password: 'admin123' });
   const [categoryName, setCategoryName] = useState('');
@@ -130,9 +134,11 @@ export function App() {
   });
 
   const [inboundForm, setInboundForm] = useState({ productId: '' as NumInput, qty: '' as NumInput, reason: '' });
+  const [outboundForm, setOutboundForm] = useState({ productId: '' as NumInput, qty: '' as NumInput, reason: '' });
   const [transitCreateForm, setTransitCreateForm] = useState({ productId: '' as NumInput, qty: '' as NumInput, reason: '' });
   const [transitReceiveForm, setTransitReceiveForm] = useState({ productId: '' as NumInput, qty: '' as NumInput, reason: '' });
   const [reserveForm, setReserveForm] = useState({ projectId: '' as NumInput, productId: '' as NumInput, qty: '' as NumInput, reason: '' });
+  const [releaseForm, setReleaseForm] = useState({ reservationId: '' as NumInput, qty: '' as NumInput, reason: '' });
   const [consumeForm, setConsumeForm] = useState({ reservationId: '' as NumInput, qty: '' as NumInput, note: '' });
 
   const isAdmin = me?.role === 'admin';
@@ -274,6 +280,15 @@ export function App() {
     }
   }
 
+  async function loadReservationsForRelease(projectId: number) {
+    try {
+      const data = await apiClient.listProjectReservations(projectId);
+      setReleaseProjectReservations(data);
+    } catch (e) {
+      setMsg('error', (e as Error).message);
+    }
+  }
+
   async function deleteSku(item: Product) {
     if (!window.confirm(`确认删除 SKU ${item.sku} 吗？\n该SKU的库存、流水、项目关联记录都会删除。`)) return;
     await runAction(async () => {
@@ -352,6 +367,15 @@ export function App() {
     setProjectReservations([]);
     setConsumeProjectId('');
     setConsumeProjectReservations([]);
+    setReleaseProjectId('');
+    setReleaseProjectReservations([]);
+    setInboundForm({ productId: '', qty: '', reason: '' });
+    setOutboundForm({ productId: '', qty: '', reason: '' });
+    setTransitCreateForm({ productId: '', qty: '', reason: '' });
+    setTransitReceiveForm({ productId: '', qty: '', reason: '' });
+    setReserveForm({ projectId: '', productId: '', qty: '', reason: '' });
+    setReleaseForm({ reservationId: '', qty: '', reason: '' });
+    setConsumeForm({ reservationId: '', qty: '', note: '' });
     setToasts([]);
   }
 
@@ -449,7 +473,17 @@ export function App() {
                 <p className="subtle">点击SKU进入详情，查看完整库存流水和关联项目。</p>
               </div>
               <div className="tools">
-                {isAdmin && <><button onClick={() => setModal('inbound')}>入库</button><button onClick={() => setModal('transitCreate')}>创建在途</button><button onClick={() => setModal('transitReceive')}>在途入库</button><button onClick={() => setModal('reserve')}>项目预留</button><button onClick={() => setModal('consume')}>项目消耗</button></>}
+                {isAdmin && (
+                  <>
+                    <button onClick={() => setModal('inbound')}>入库</button>
+                    <button onClick={() => setModal('outbound')}>出库</button>
+                    <button onClick={() => setModal('transitCreate')}>创建在途</button>
+                    <button onClick={() => setModal('transitReceive')}>在途入库</button>
+                    <button onClick={() => setModal('reserve')}>项目预留</button>
+                    <button onClick={() => setModal('release')}>释放预留</button>
+                    <button onClick={() => setModal('consume')}>项目消耗</button>
+                  </>
+                )}
               </div>
             </div>
 
@@ -699,6 +733,19 @@ export function App() {
         }} />
       </Modal>
 
+      <Modal open={modal === 'outbound'} title="库存出库" onClose={() => setModal(null)}>
+        <InventoryActionForm products={products} state={outboundForm} setState={setOutboundForm} onSubmit={(e) => {
+          e.preventDefault();
+          if (!isPositive(outboundForm.productId) || !isPositive(outboundForm.qty)) return setMsg('error', '请选择SKU并输入正整数数量');
+          void runAction(async () => {
+            await apiClient.outbound({ product_id: toNum(outboundForm.productId), qty: toNum(outboundForm.qty), reason: outboundForm.reason.trim() });
+            setOutboundForm({ productId: '', qty: '', reason: '' });
+            await loadBase();
+            if (selectedInventoryProductId) await loadInventoryDetail(selectedInventoryProductId);
+          }, '出库成功');
+        }} />
+      </Modal>
+
       <Modal open={modal === 'transitCreate'} title="创建在途" onClose={() => setModal(null)}>
         <InventoryActionForm products={products} state={transitCreateForm} setState={setTransitCreateForm} onSubmit={(e) => {
           e.preventDefault();
@@ -741,6 +788,36 @@ export function App() {
           <select value={reserveForm.productId} onChange={(e) => setReserveForm({ ...reserveForm, productId: e.target.value ? Number(e.target.value) : '' })}><option value="">选择SKU</option>{products.map((p) => <option key={p.id} value={p.id}>{p.sku} / {p.name}</option>)}</select>
           <input type="number" placeholder="预留数量" value={reserveForm.qty} onChange={(e) => setReserveForm({ ...reserveForm, qty: e.target.value ? Number(e.target.value) : '' })} />
           <input placeholder="备注" value={reserveForm.reason} onChange={(e) => setReserveForm({ ...reserveForm, reason: e.target.value })} />
+          <button type="submit">提交</button>
+        </form>
+      </Modal>
+
+      <Modal open={modal === 'release'} title="释放项目预留" onClose={() => setModal(null)}>
+        <form className="form" onSubmit={(e) => {
+          e.preventDefault();
+          if (!isPositive(releaseForm.reservationId) || !isPositive(releaseForm.qty)) return setMsg('error', '请选择预留记录并输入正整数数量');
+          void runAction(async () => {
+            await apiClient.release({ reservation_id: toNum(releaseForm.reservationId), qty: toNum(releaseForm.qty), reason: releaseForm.reason.trim() });
+            setReleaseForm({ reservationId: '', qty: '', reason: '' });
+            await loadBase();
+            if (selectedInventoryProductId) await loadInventoryDetail(selectedInventoryProductId);
+            if (selectedProjectId) await loadProjectDetail(selectedProjectId);
+          }, '预留释放成功');
+        }}>
+          <select value={releaseProjectId} onChange={(e) => {
+            const projectId = e.target.value ? Number(e.target.value) : '';
+            setReleaseProjectId(projectId);
+            setReleaseForm({ reservationId: '', qty: '', reason: '' });
+            if (projectId) void loadReservationsForRelease(projectId);
+            else setReleaseProjectReservations([]);
+          }}>
+            <option value="">选择项目</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.project_code} / {p.project_name}</option>)}
+          </select>
+          <select value={releaseForm.reservationId} onChange={(e) => setReleaseForm({ ...releaseForm, reservationId: e.target.value ? Number(e.target.value) : '' })}>
+            <option value="">选择预留记录</option>{releaseProjectReservations.filter((r) => r.remaining_qty > 0).map((r) => <option key={r.reservation_id} value={r.reservation_id}>#{r.reservation_id} / {r.sku} / 剩余{r.remaining_qty}</option>)}
+          </select>
+          <input type="number" placeholder="释放数量" value={releaseForm.qty} onChange={(e) => setReleaseForm({ ...releaseForm, qty: e.target.value ? Number(e.target.value) : '' })} />
+          <input placeholder="释放备注" value={releaseForm.reason} onChange={(e) => setReleaseForm({ ...releaseForm, reason: e.target.value })} />
           <button type="submit">提交</button>
         </form>
       </Modal>
