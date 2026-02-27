@@ -110,7 +110,7 @@ export function App() {
   const [releaseProjectId, setReleaseProjectId] = useState<NumInput>('');
   const [releaseProjectReservations, setReleaseProjectReservations] = useState<ProjectReservation[]>([]);
 
-  const [loginForm, setLoginForm] = useState({ email: 'admin@example.com', password: 'admin123' });
+  const [loginForm, setLoginForm] = useState({ email: '', password: '' });
   const [categoryName, setCategoryName] = useState('');
   const [skuForm, setSkuForm] = useState({
     sku: '',
@@ -458,7 +458,6 @@ export function App() {
             }, '登录成功', false);
           }}>
             <h1>AM Manager</h1>
-            <p>默认管理员：admin@example.com / admin123</p>
             <label>邮箱<input value={loginForm.email} onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })} /></label>
             <label>密码<input type="password" value={loginForm.password} onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })} /></label>
             <button type="submit" disabled={loading}>登录</button>
