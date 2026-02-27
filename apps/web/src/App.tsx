@@ -141,6 +141,16 @@ export function App() {
 
   const productById = useMemo(() => new Map(products.map((x) => [x.id, x])), [products]);
   const inventoryByProductId = useMemo(() => new Map(inventory.map((x) => [x.product_id, x])), [inventory]);
+  const categoryChildrenMap = useMemo(() => {
+    const map = new Map<number, number[]>();
+    for (const category of categories) {
+      if (category.parent_id == null) continue;
+      const list = map.get(category.parent_id) || [];
+      list.push(category.id);
+      map.set(category.parent_id, list);
+    }
+    return map;
+  }, [categories]);
   const selectedInventoryProduct = selectedInventoryProductId ? productById.get(selectedInventoryProductId) ?? null : null;
   const selectedInventoryBalance = selectedInventoryProductId ? inventoryByProductId.get(selectedInventoryProductId) ?? null : null;
   const selectedProject = selectedProjectId ? projects.find((x) => x.id === selectedProjectId) ?? null : null;
@@ -158,6 +168,20 @@ export function App() {
 
   function setMsg(type: 'ok' | 'error', text: string) {
     pushToast(type, text);
+  }
+
+  function getDescendantCategoryIds(rootId: number) {
+    const ids: number[] = [];
+    const queue: number[] = [rootId];
+    const seen = new Set<number>();
+    while (queue.length > 0) {
+      const id = Number(queue.shift());
+      if (!Number.isInteger(id) || seen.has(id)) continue;
+      seen.add(id);
+      ids.push(id);
+      for (const childId of categoryChildrenMap.get(id) || []) queue.push(childId);
+    }
+    return ids;
   }
 
   async function runAction(fn: () => Promise<void>, okText: string, closeModal = true) {
@@ -260,6 +284,23 @@ export function App() {
       }
       await loadBase();
     }, 'SKU删除成功', false);
+  }
+
+  async function deleteCategory(item: Category) {
+    const categoryIds = getDescendantCategoryIds(item.id);
+    const productCount = products.filter((x) => categoryIds.includes(x.category_id)).length;
+    const categoryCount = categoryIds.length;
+    const confirmText = `确认删除分类 ${item.name} 吗？\n将同步删除 ${categoryCount} 个分类、${productCount} 个SKU及其全部库存/项目关联数据。`;
+    if (!window.confirm(confirmText)) return;
+
+    await runAction(async () => {
+      await apiClient.deleteCategory(item.id);
+      if (selectedInventoryProductId && !products.some((x) => x.id === selectedInventoryProductId && !categoryIds.includes(x.category_id))) {
+        setSelectedInventoryProductId(null);
+        setInventoryTransactions([]);
+      }
+      await loadBase();
+    }, '分类删除成功', false);
   }
 
   async function deleteProject(item: Project) {
@@ -383,10 +424,17 @@ export function App() {
             <h4 className="section-title">分类列表</h4>
             <div className="table-wrap">
               <table>
-                <thead><tr><th>ID</th><th>分类名称</th><th>上级分类ID</th></tr></thead>
+                <thead><tr><th>ID</th><th>分类名称</th><th>上级分类ID</th>{isAdmin && <th>操作</th>}</tr></thead>
                 <tbody>
-                  {categories.map((cat) => <tr key={cat.id}><td>{cat.id}</td><td>{cat.name}</td><td>{cat.parent_id ?? '-'}</td></tr>)}
-                  {categories.length === 0 && <tr><td colSpan={3} className="empty-cell">暂无分类数据</td></tr>}
+                  {categories.map((cat) => (
+                    <tr key={cat.id}>
+                      <td>{cat.id}</td>
+                      <td>{cat.name}</td>
+                      <td>{cat.parent_id ?? '-'}</td>
+                      {isAdmin && <td><button className="text-btn danger" onClick={() => void deleteCategory(cat)}>删除</button></td>}
+                    </tr>
+                  ))}
+                  {categories.length === 0 && <tr><td colSpan={isAdmin ? 4 : 3} className="empty-cell">暂无分类数据</td></tr>}
                 </tbody>
               </table>
             </div>

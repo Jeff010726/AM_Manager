@@ -254,6 +254,73 @@ app.put('/api/categories/:id', async (c) => {
   return c.json({ success: true, data: { id: categoryId } });
 });
 
+app.delete('/api/categories/:id', async (c) => {
+  const guard = requireAdmin(c);
+  if (guard) return guard;
+
+  const categoryId = Number(c.req.param('id'));
+  if (!Number.isInteger(categoryId) || categoryId <= 0) return apiError(c, 400, 'INVALID_PARAMS', 'Invalid category id');
+
+  const allCategories = await c.env.DB.prepare('SELECT id, parent_id, name FROM categories').all<{
+    id: number;
+    parent_id: number | null;
+    name: string;
+  }>();
+  const categoryRows = allCategories.results || [];
+  const current = categoryRows.find((x) => Number(x.id) === categoryId);
+  if (!current) return apiError(c, 404, 'NOT_FOUND', 'Category not found');
+
+  const childrenMap = new Map<number, number[]>();
+  for (const row of categoryRows) {
+    if (row.parent_id == null) continue;
+    const parent = Number(row.parent_id);
+    const child = Number(row.id);
+    const list = childrenMap.get(parent) || [];
+    list.push(child);
+    childrenMap.set(parent, list);
+  }
+
+  const categoryIds: number[] = [];
+  const queue = [categoryId];
+  const seen = new Set<number>();
+  while (queue.length > 0) {
+    const id = Number(queue.shift());
+    if (!Number.isInteger(id) || seen.has(id)) continue;
+    seen.add(id);
+    categoryIds.push(id);
+    for (const childId of childrenMap.get(id) || []) queue.push(childId);
+  }
+
+  const categoryPlaceholders = categoryIds.map(() => '?').join(', ');
+  const productsInScope = await c.env.DB.prepare(
+    `SELECT id FROM products WHERE category_id IN (${categoryPlaceholders})`,
+  )
+    .bind(...categoryIds)
+    .all<{ id: number }>();
+  const productIds = (productsInScope.results || []).map((x) => Number(x.id)).filter((x) => Number.isInteger(x) && x > 0);
+
+  for (const productId of productIds) {
+    await deleteProductCascade(c.env.DB, productId);
+  }
+
+  for (const id of [...categoryIds].reverse()) {
+    await c.env.DB.prepare('DELETE FROM categories WHERE id = ?').bind(id).run();
+  }
+
+  await writeAudit(c, 'category.delete', 'category', String(categoryId), current, {
+    deleted_category_ids: categoryIds,
+    deleted_product_ids: productIds,
+  });
+  return c.json({
+    success: true,
+    data: {
+      id: categoryId,
+      deleted_category_count: categoryIds.length,
+      deleted_product_count: productIds.length,
+    },
+  });
+});
+
 app.get('/api/products', async (c) => {
   const q = (c.req.query('q') || '').trim();
   const rows = await c.env.DB.prepare(
@@ -371,12 +438,7 @@ app.delete('/api/products/:id', async (c) => {
   const before = await c.env.DB.prepare('SELECT * FROM products WHERE id = ?').bind(productId).first();
   if (!before) return apiError(c, 404, 'NOT_FOUND', 'Product not found');
 
-  await c.env.DB.prepare('DELETE FROM inventory_transactions WHERE product_id = ?').bind(productId).run();
-  await c.env.DB.prepare('DELETE FROM project_consumptions WHERE product_id = ?').bind(productId).run();
-  await c.env.DB.prepare('DELETE FROM project_reservations WHERE product_id = ?').bind(productId).run();
-  await c.env.DB.prepare('DELETE FROM project_material_plans WHERE product_id = ?').bind(productId).run();
-  await c.env.DB.prepare('DELETE FROM inventory_balances WHERE product_id = ?').bind(productId).run();
-  await c.env.DB.prepare('DELETE FROM products WHERE id = ?').bind(productId).run();
+  await deleteProductCascade(c.env.DB, productId);
 
   await writeAudit(c, 'product.delete', 'product', String(productId), before, null);
   return c.json({ success: true, data: { id: productId } });
@@ -1333,6 +1395,15 @@ async function ensureBalanceRow(db: D1Database, productId: number) {
   )
     .bind(productId, now())
     .run();
+}
+
+async function deleteProductCascade(db: D1Database, productId: number) {
+  await db.prepare('DELETE FROM inventory_transactions WHERE product_id = ?').bind(productId).run();
+  await db.prepare('DELETE FROM project_consumptions WHERE product_id = ?').bind(productId).run();
+  await db.prepare('DELETE FROM project_reservations WHERE product_id = ?').bind(productId).run();
+  await db.prepare('DELETE FROM project_material_plans WHERE product_id = ?').bind(productId).run();
+  await db.prepare('DELETE FROM inventory_balances WHERE product_id = ?').bind(productId).run();
+  await db.prepare('DELETE FROM products WHERE id = ?').bind(productId).run();
 }
 
 async function existsById(db: D1Database, table: string, id: number) {

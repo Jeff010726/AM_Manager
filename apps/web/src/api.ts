@@ -87,6 +87,12 @@ export class ApiClient {
     });
   }
 
+  deleteCategory(categoryId: number) {
+    return this.request<{ id: number; deleted_category_count: number; deleted_product_count: number }>(`/api/categories/${categoryId}`, {
+      method: 'DELETE',
+    });
+  }
+
   listProducts(q = '') {
     const query = q ? `?q=${encodeURIComponent(q)}` : '';
     return this.request<Product[]>(`/api/products${query}`);
