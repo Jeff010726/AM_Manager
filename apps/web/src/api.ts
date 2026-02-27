@@ -70,6 +70,12 @@ export class ApiClient {
     });
   }
 
+  deleteUser(userId: number) {
+    return this.request<{ id: number; status: string }>(`/api/users/${userId}`, {
+      method: 'DELETE',
+    });
+  }
+
   listCategories() {
     return this.request<Category[]>('/api/categories');
   }
@@ -101,6 +107,12 @@ export class ApiClient {
     });
   }
 
+  deleteProduct(productId: number) {
+    return this.request<{ id: number }>(`/api/products/${productId}`, {
+      method: 'DELETE',
+    });
+  }
+
   listProjects() {
     return this.request<Project[]>('/api/projects');
   }
@@ -115,6 +127,12 @@ export class ApiClient {
     return this.request<{ id: number }>('/api/projects', {
       method: 'POST',
       body: JSON.stringify(payload),
+    });
+  }
+
+  deleteProject(projectId: number) {
+    return this.request<{ id: number }>(`/api/projects/${projectId}`, {
+      method: 'DELETE',
     });
   }
 
