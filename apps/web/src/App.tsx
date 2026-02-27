@@ -156,6 +156,7 @@ export function App() {
   const [projectPageSize, setProjectPageSize] = useState<number>(20);
 
   const isAdmin = me?.role === 'admin';
+  const userRows = useMemo(() => [...users].sort((a, b) => a.id - b.id), [users]);
   const skuRows = useMemo(() => [...products].sort((a, b) => a.sku.localeCompare(b.sku, 'en', { sensitivity: 'base' })), [products]);
   const inventoryRows = useMemo(() => [...inventory].sort((a, b) => a.sku.localeCompare(b.sku, 'en', { sensitivity: 'base' })), [inventory]);
   const projectRows = useMemo(() => [...projects], [projects]);
@@ -775,11 +776,11 @@ export function App() {
             </div>
             <div className="table-wrap">
               <table>
-                <thead><tr><th>ID</th><th>姓名</th><th>邮箱</th><th>角色</th><th>状态</th><th>操作</th></tr></thead>
+                <thead><tr><th>序号</th><th>系统ID</th><th>姓名</th><th>邮箱</th><th>角色</th><th>状态</th><th>操作</th></tr></thead>
                 <tbody>
-                  {users.map((u) => (
+                  {userRows.map((u, idx) => (
                     <tr key={u.id}>
-                      <td>{u.id}</td><td>{u.name}</td><td>{u.email}</td><td>{roleLabel(u.role)}</td><td>{u.status}</td>
+                      <td>{idx + 1}</td><td>{u.id}</td><td>{u.name}</td><td>{u.email}</td><td>{roleLabel(u.role)}</td><td>{u.status}</td>
                       <td>
                         {u.id !== me?.id ? (
                           <>
@@ -790,7 +791,7 @@ export function App() {
                       </td>
                     </tr>
                   ))}
-                  {users.length === 0 && <tr><td colSpan={6} className="empty-cell">暂无用户数据</td></tr>}
+                  {userRows.length === 0 && <tr><td colSpan={7} className="empty-cell">暂无用户数据</td></tr>}
                 </tbody>
               </table>
             </div>
