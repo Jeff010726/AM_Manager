@@ -840,6 +840,76 @@ app.post('/api/projects/:id/commits', async (c) => {
   return c.json({ success: true, data: { commit_id: commitId, seq_no: seqNo } }, 201);
 });
 
+app.put('/api/projects/:id/commits/:commitId', async (c) => {
+  const projectId = Number(c.req.param('id'));
+  const commitId = Number(c.req.param('commitId'));
+  if (!Number.isInteger(projectId) || projectId <= 0 || !Number.isInteger(commitId) || commitId <= 0) {
+    return apiError(c, 400, 'INVALID_PARAMS', 'Invalid project id or commit id');
+  }
+
+  const user = c.get('authUser');
+  const project = await c.env.DB.prepare('SELECT id FROM projects WHERE id = ?').bind(projectId).first<{ id: number }>();
+  if (!project) return apiError(c, 404, 'NOT_FOUND', 'Project not found');
+
+  const member = await c.env.DB.prepare('SELECT project_role FROM project_members WHERE project_id = ? AND user_id = ?')
+    .bind(projectId, user.id)
+    .first<{ project_role: string }>();
+  if (user.role !== 'admin' && !member) return apiError(c, 403, 'FORBIDDEN', 'Only project members can edit commits');
+
+  const before = await c.env.DB.prepare(
+    'SELECT id, seq_no, title, content, status_from, status_to, progress_pct FROM project_commits WHERE id = ? AND project_id = ?',
+  )
+    .bind(commitId, projectId)
+    .first<{ id: number; seq_no: number; title: string; content: string; status_from: string; status_to: string; progress_pct: number | null }>();
+  if (!before) return apiError(c, 404, 'NOT_FOUND', 'Commit not found');
+
+  const schema = z.object({
+    title: z.string().min(1),
+    content: z.string().min(1),
+    status_to: projectStatusEnum,
+    progress_pct: z.number().int().min(0).max(100).optional().nullable(),
+  });
+  const body = schema.safeParse(await c.req.json().catch(() => ({})));
+  if (!body.success) return apiError(c, 400, 'INVALID_PARAMS', body.error.issues[0]?.message || 'Invalid payload');
+
+  await c.env.DB.prepare(
+    'UPDATE project_commits SET title = ?, content = ?, status_to = ?, progress_pct = ? WHERE id = ? AND project_id = ?',
+  )
+    .bind(
+      body.data.title,
+      body.data.content,
+      body.data.status_to,
+      body.data.progress_pct ?? null,
+      commitId,
+      projectId,
+    )
+    .run();
+
+  const current = await c.env.DB.prepare('SELECT status_to FROM project_commits WHERE id = ? AND project_id = ?')
+    .bind(commitId, projectId)
+    .first<{ status_to: string }>();
+  let prevStatus = String(current?.status_to || body.data.status_to);
+  const nextRows = await c.env.DB.prepare(
+    'SELECT id, status_to FROM project_commits WHERE project_id = ? AND seq_no > ? ORDER BY seq_no ASC',
+  )
+    .bind(projectId, before.seq_no)
+    .all<{ id: number; status_to: string }>();
+  for (const row of nextRows.results || []) {
+    await c.env.DB.prepare('UPDATE project_commits SET status_from = ? WHERE id = ?').bind(prevStatus, row.id).run();
+    prevStatus = row.status_to;
+  }
+
+  const latest = await c.env.DB.prepare('SELECT status_to FROM project_commits WHERE project_id = ? ORDER BY seq_no DESC LIMIT 1')
+    .bind(projectId)
+    .first<{ status_to: string }>();
+  if (latest?.status_to) {
+    await c.env.DB.prepare('UPDATE projects SET status = ?, updated_at = ? WHERE id = ?').bind(latest.status_to, now(), projectId).run();
+  }
+
+  await writeAudit(c, 'project_commit.update', 'project', String(projectId), before, body.data);
+  return c.json({ success: true, data: { commit_id: commitId } });
+});
+
 app.get('/api/inventory/summary', async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT p.id AS product_id, p.sku, p.name, p.unit, p.safety_stock_qty,
@@ -953,7 +1023,23 @@ app.post('/api/inventory/outbound', async (c) => {
     )
       .bind(body.qty, body.qty, now(), body.product_id, body.qty)
       .run();
-    if ((run.meta.changes ?? 0) === 0) return apiError(c, 409, 'INSUFFICIENT_AVAILABLE_STOCK', 'Not enough available stock');
+    if ((run.meta.changes ?? 0) === 0) {
+      const balance = await c.env.DB.prepare(
+        'SELECT COALESCE(on_hand_qty, 0) AS on_hand_qty, COALESCE(in_transit_qty, 0) AS in_transit_qty, COALESCE(reserved_qty, 0) AS reserved_qty FROM inventory_balances WHERE product_id = ?',
+      )
+        .bind(body.product_id)
+        .first<{ on_hand_qty: number; in_transit_qty: number; reserved_qty: number }>();
+      const onHand = Number(balance?.on_hand_qty || 0);
+      const inTransit = Number(balance?.in_transit_qty || 0);
+      const reserved = Number(balance?.reserved_qty || 0);
+      const available = onHand - reserved;
+      return apiError(
+        c,
+        409,
+        'INSUFFICIENT_AVAILABLE_STOCK',
+        `可用库存不足（可用=${available}，在手=${onHand}，预留=${reserved}，在途=${inTransit}，申请=${body.qty}）`,
+      );
+    }
 
     await insertInventoryTx(c, {
       product_id: body.product_id,
@@ -1060,7 +1146,23 @@ app.post('/api/inventory/reserve', async (c) => {
     )
       .bind(body.qty, now(), body.product_id, body.qty)
       .run();
-    if ((run.meta.changes ?? 0) === 0) return apiError(c, 409, 'INSUFFICIENT_AVAILABLE_STOCK', 'Not enough available stock');
+    if ((run.meta.changes ?? 0) === 0) {
+      const balance = await c.env.DB.prepare(
+        'SELECT COALESCE(on_hand_qty, 0) AS on_hand_qty, COALESCE(in_transit_qty, 0) AS in_transit_qty, COALESCE(reserved_qty, 0) AS reserved_qty FROM inventory_balances WHERE product_id = ?',
+      )
+        .bind(body.product_id)
+        .first<{ on_hand_qty: number; in_transit_qty: number; reserved_qty: number }>();
+      const onHand = Number(balance?.on_hand_qty || 0);
+      const inTransit = Number(balance?.in_transit_qty || 0);
+      const reserved = Number(balance?.reserved_qty || 0);
+      const available = onHand - reserved;
+      return apiError(
+        c,
+        409,
+        'INSUFFICIENT_AVAILABLE_STOCK',
+        `可用库存不足（可用=${available}，在手=${onHand}，预留=${reserved}，在途=${inTransit}，申请=${body.qty}）`,
+      );
+    }
 
     const reservation = await c.env.DB.prepare(
       `INSERT INTO project_reservations (project_id, product_id, qty, consumed_qty, released_qty, status, created_at, updated_at)

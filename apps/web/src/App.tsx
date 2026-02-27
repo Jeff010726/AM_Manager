@@ -16,6 +16,7 @@ import type {
 type Tab = 'sku' | 'inventory' | 'projects' | 'users';
 type NumInput = '' | number;
 type Toast = { id: number; type: 'ok' | 'error'; text: string };
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
 
 type ModalType =
   | null
@@ -31,6 +32,7 @@ type ModalType =
   | 'project'
   | 'member'
   | 'commit'
+  | 'commitEdit'
   | 'user';
 
 const projectStatusOptions = ['planned', 'active', 'blocked', 'done', 'cancelled'] as const;
@@ -126,6 +128,13 @@ export function App() {
     statusTo: 'active' as (typeof projectStatusOptions)[number],
     progress: 0,
   });
+  const [editCommitForm, setEditCommitForm] = useState({
+    commitId: '' as NumInput,
+    title: '',
+    content: '',
+    statusTo: 'active' as (typeof projectStatusOptions)[number],
+    progress: 0,
+  });
   const [userForm, setUserForm] = useState<{ email: string; name: string; password: string; role: 'admin' | 'visitor' }>({
     email: '',
     name: '',
@@ -140,10 +149,17 @@ export function App() {
   const [reserveForm, setReserveForm] = useState({ projectId: '' as NumInput, productId: '' as NumInput, qty: '' as NumInput, reason: '' });
   const [releaseForm, setReleaseForm] = useState({ reservationId: '' as NumInput, qty: '' as NumInput, reason: '' });
   const [consumeForm, setConsumeForm] = useState({ reservationId: '' as NumInput, qty: '' as NumInput, note: '' });
+  const [skuPage, setSkuPage] = useState(1);
+  const [inventoryPage, setInventoryPage] = useState(1);
+  const [projectPage, setProjectPage] = useState(1);
+  const [skuPageSize, setSkuPageSize] = useState<number>(20);
+  const [inventoryPageSize, setInventoryPageSize] = useState<number>(20);
+  const [projectPageSize, setProjectPageSize] = useState<number>(20);
 
   const isAdmin = me?.role === 'admin';
   const skuRows = useMemo(() => [...products].sort((a, b) => a.sku.localeCompare(b.sku, 'en', { sensitivity: 'base' })), [products]);
   const inventoryRows = useMemo(() => [...inventory].sort((a, b) => a.sku.localeCompare(b.sku, 'en', { sensitivity: 'base' })), [inventory]);
+  const projectRows = useMemo(() => [...projects], [projects]);
 
   const productById = useMemo(() => new Map(products.map((x) => [x.id, x])), [products]);
   const inventoryByProductId = useMemo(() => new Map(inventory.map((x) => [x.product_id, x])), [inventory]);
@@ -160,6 +176,29 @@ export function App() {
   const selectedInventoryProduct = selectedInventoryProductId ? productById.get(selectedInventoryProductId) ?? null : null;
   const selectedInventoryBalance = selectedInventoryProductId ? inventoryByProductId.get(selectedInventoryProductId) ?? null : null;
   const selectedProject = selectedProjectId ? projects.find((x) => x.id === selectedProjectId) ?? null : null;
+  const isProjectMember = !!me && members.some((m) => m.user_id === me.id);
+  const canEditProjectCommits = !!selectedProjectId && (isAdmin || isProjectMember);
+
+  const skuPageCount = Math.max(1, Math.ceil(skuRows.length / skuPageSize));
+  const inventoryPageCount = Math.max(1, Math.ceil(inventoryRows.length / inventoryPageSize));
+  const projectPageCount = Math.max(1, Math.ceil(projectRows.length / projectPageSize));
+
+  const skuCurrentPage = Math.min(skuPage, skuPageCount);
+  const inventoryCurrentPage = Math.min(inventoryPage, inventoryPageCount);
+  const projectCurrentPage = Math.min(projectPage, projectPageCount);
+
+  const pagedSkuRows = useMemo(
+    () => skuRows.slice((skuCurrentPage - 1) * skuPageSize, skuCurrentPage * skuPageSize),
+    [skuRows, skuCurrentPage, skuPageSize],
+  );
+  const pagedInventoryRows = useMemo(
+    () => inventoryRows.slice((inventoryCurrentPage - 1) * inventoryPageSize, inventoryCurrentPage * inventoryPageSize),
+    [inventoryRows, inventoryCurrentPage, inventoryPageSize],
+  );
+  const pagedProjectRows = useMemo(
+    () => projectRows.slice((projectCurrentPage - 1) * projectPageSize, projectCurrentPage * projectPageSize),
+    [projectRows, projectCurrentPage, projectPageSize],
+  );
 
   function removeToast(id: number) {
     setToasts((prev) => prev.filter((x) => x.id !== id));
@@ -340,12 +379,35 @@ export function App() {
     }, '用户已停用', false);
   }
 
+  function openCommitEditor(commit: ProjectCommit) {
+    setEditCommitForm({
+      commitId: commit.commit_id,
+      title: commit.title,
+      content: commit.content,
+      statusTo: commit.status_to,
+      progress: typeof commit.progress_pct === 'number' ? commit.progress_pct : 0,
+    });
+    setModal('commitEdit');
+  }
+
   useEffect(() => {
     if (!token) return;
     apiClient.setToken(token);
     void loadBase();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  useEffect(() => {
+    if (skuPage > skuPageCount) setSkuPage(skuPageCount);
+  }, [skuPage, skuPageCount]);
+
+  useEffect(() => {
+    if (inventoryPage > inventoryPageCount) setInventoryPage(inventoryPageCount);
+  }, [inventoryPage, inventoryPageCount]);
+
+  useEffect(() => {
+    if (projectPage > projectPageCount) setProjectPage(projectPageCount);
+  }, [projectPage, projectPageCount]);
 
   function logout() {
     localStorage.removeItem('am_token');
@@ -376,6 +438,10 @@ export function App() {
     setReserveForm({ projectId: '', productId: '', qty: '', reason: '' });
     setReleaseForm({ reservationId: '', qty: '', reason: '' });
     setConsumeForm({ reservationId: '', qty: '', note: '' });
+    setEditCommitForm({ commitId: '', title: '', content: '', statusTo: 'active', progress: 0 });
+    setSkuPage(1);
+    setInventoryPage(1);
+    setProjectPage(1);
     setToasts([]);
   }
 
@@ -434,7 +500,7 @@ export function App() {
               <table>
                 <thead><tr><th>SKU编号</th><th>产品名称</th><th>分类</th><th>产品型号/规格</th><th>单位</th><th>安全库存</th><th>状态</th>{isAdmin && <th>操作</th>}</tr></thead>
                 <tbody>
-                  {skuRows.map((item) => (
+                  {pagedSkuRows.map((item) => (
                     <tr key={item.id}>
                       <td>{item.sku}</td><td>{item.name}</td><td>{item.category_name}</td><td>{item.spec || '-'}</td><td>{item.unit}</td><td>{item.safety_stock_qty}</td><td>{item.status}</td>
                       {isAdmin && <td><button className="text-btn" onClick={() => void loadInventoryDetail(item.id)}>库存详情</button><button className="text-btn danger" onClick={() => void deleteSku(item)}>删除</button></td>}
@@ -444,21 +510,33 @@ export function App() {
                 </tbody>
               </table>
             </div>
+            <Pager
+              total={skuRows.length}
+              page={skuCurrentPage}
+              pageCount={skuPageCount}
+              pageSize={skuPageSize}
+              onPageChange={setSkuPage}
+              onPageSizeChange={(size) => {
+                setSkuPageSize(size);
+                setSkuPage(1);
+              }}
+            />
 
             <h4 className="section-title">分类列表</h4>
             <div className="table-wrap">
               <table>
-                <thead><tr><th>ID</th><th>分类名称</th><th>上级分类ID</th>{isAdmin && <th>操作</th>}</tr></thead>
+                <thead><tr><th>序号</th><th>系统ID</th><th>分类名称</th><th>上级分类ID</th>{isAdmin && <th>操作</th>}</tr></thead>
                 <tbody>
-                  {categories.map((cat) => (
+                  {categories.map((cat, idx) => (
                     <tr key={cat.id}>
+                      <td>{idx + 1}</td>
                       <td>{cat.id}</td>
                       <td>{cat.name}</td>
                       <td>{cat.parent_id ?? '-'}</td>
                       {isAdmin && <td><button className="text-btn danger" onClick={() => void deleteCategory(cat)}>删除</button></td>}
                     </tr>
                   ))}
-                  {categories.length === 0 && <tr><td colSpan={isAdmin ? 4 : 3} className="empty-cell">暂无分类数据</td></tr>}
+                  {categories.length === 0 && <tr><td colSpan={isAdmin ? 5 : 4} className="empty-cell">暂无分类数据</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -470,7 +548,7 @@ export function App() {
             <div className="toolbar">
               <div>
                 <h3>库存台账</h3>
-                <p className="subtle">点击SKU进入详情，查看完整库存流水和关联项目。</p>
+                <p className="subtle">点击SKU进入详情查看流水。预留按可用库存计算（可用=在手-预留，在途不计可用）。</p>
               </div>
               <div className="tools">
                 {isAdmin && (
@@ -488,20 +566,33 @@ export function App() {
             </div>
 
             {!selectedInventoryProductId && (
-              <div className="table-wrap">
-                <table>
-                  <thead><tr><th>SKU</th><th>名称</th><th>总库存</th><th>在途</th><th>在手</th><th>可用</th><th>预留</th><th>已消耗</th><th>安全库存</th><th>缺口</th></tr></thead>
-                  <tbody>
-                    {inventoryRows.map((item) => (
-                      <tr key={item.product_id}>
-                        <td><button className="link-btn" onClick={() => void loadInventoryDetail(item.product_id)}>{item.sku}</button></td>
-                        <td>{item.name}</td><td>{item.total_stock_qty}</td><td>{item.in_transit_qty}</td><td>{item.on_hand_qty}</td><td>{item.available_qty}</td><td>{item.reserved_qty}</td><td>{item.consumed_qty}</td><td>{item.safety_stock_qty}</td><td>{item.shortage_qty}</td>
-                      </tr>
-                    ))}
-                    {inventoryRows.length === 0 && <tr><td colSpan={10} className="empty-cell">暂无库存数据</td></tr>}
-                  </tbody>
-                </table>
-              </div>
+              <>
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>SKU</th><th>名称</th><th>总库存</th><th>在途</th><th>在手</th><th>可用</th><th>预留</th><th>已消耗</th><th>安全库存</th><th>缺口</th></tr></thead>
+                    <tbody>
+                      {pagedInventoryRows.map((item) => (
+                        <tr key={item.product_id}>
+                          <td><button className="link-btn" onClick={() => void loadInventoryDetail(item.product_id)}>{item.sku}</button></td>
+                          <td>{item.name}</td><td>{item.total_stock_qty}</td><td>{item.in_transit_qty}</td><td>{item.on_hand_qty}</td><td>{item.available_qty}</td><td>{item.reserved_qty}</td><td>{item.consumed_qty}</td><td>{item.safety_stock_qty}</td><td>{item.shortage_qty}</td>
+                        </tr>
+                      ))}
+                      {inventoryRows.length === 0 && <tr><td colSpan={10} className="empty-cell">暂无库存数据</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+                <Pager
+                  total={inventoryRows.length}
+                  page={inventoryCurrentPage}
+                  pageCount={inventoryPageCount}
+                  pageSize={inventoryPageSize}
+                  onPageChange={setInventoryPage}
+                  onPageSizeChange={(size) => {
+                    setInventoryPageSize(size);
+                    setInventoryPage(1);
+                  }}
+                />
+              </>
             )}
             {selectedInventoryProductId && selectedInventoryProduct && selectedInventoryBalance && (
               <>
@@ -569,7 +660,7 @@ export function App() {
                   <table>
                     <thead><tr><th>项目编码</th><th>项目名称</th><th>状态</th><th>负责人</th><th>备注</th><th>开始日期</th><th>结束日期</th>{isAdmin && <th>操作</th>}</tr></thead>
                     <tbody>
-                      {projects.map((item) => (
+                      {pagedProjectRows.map((item) => (
                         <tr key={item.id}>
                           <td>{item.project_code}</td>
                           <td><button className="link-btn" onClick={() => void loadProjectDetail(item.id)}>{item.project_name}</button></td>
@@ -585,6 +676,17 @@ export function App() {
                     </tbody>
                   </table>
                 </div>
+                <Pager
+                  total={projects.length}
+                  page={projectCurrentPage}
+                  pageCount={projectPageCount}
+                  pageSize={projectPageSize}
+                  onPageChange={setProjectPage}
+                  onPageSizeChange={(size) => {
+                    setProjectPageSize(size);
+                    setProjectPage(1);
+                  }}
+                />
               </>
             )}
 
@@ -603,7 +705,7 @@ export function App() {
                   </div>
                 </div>
 
-                {projectDetailLoading && <div className="msg ok">项目详情加载中...</div>}
+                {projectDetailLoading && <div className="subtle">项目详情加载中...</div>}
 
                 <h4 className="section-title">项目成员</h4>
                 <div className="table-wrap"><table><thead><tr><th>成员</th><th>系统角色</th><th>项目角色</th><th>加入时间</th><th>最近提交</th></tr></thead>
@@ -622,7 +724,7 @@ export function App() {
                 </table></div>
 
                 <h4 className="section-title">项目Commit记录</h4>
-                <div className="table-wrap"><table><thead><tr><th>序号</th><th>标题</th><th>内容</th><th>作者</th><th>角色</th><th>状态流转</th><th>进度</th><th>时间</th></tr></thead>
+                <div className="table-wrap"><table><thead><tr><th>序号</th><th>标题</th><th>内容</th><th>作者</th><th>角色</th><th>状态流转</th><th>进度</th><th>时间</th>{canEditProjectCommits && <th>操作</th>}</tr></thead>
                   <tbody>
                     {commits.map((cmt) => (
                       <tr key={cmt.commit_id}>
@@ -638,9 +740,10 @@ export function App() {
                         </td>
                         <td>{typeof cmt.progress_pct === 'number' ? `${cmt.progress_pct}%` : '-'}</td>
                         <td>{fmtDateTime(cmt.created_at)}</td>
+                        {canEditProjectCommits && <td><button className="text-btn" onClick={() => openCommitEditor(cmt)}>编辑</button></td>}
                       </tr>
                     ))}
-                    {commits.length === 0 && <tr><td colSpan={8} className="empty-cell">暂无提交记录</td></tr>}
+                    {commits.length === 0 && <tr><td colSpan={canEditProjectCommits ? 9 : 8} className="empty-cell">暂无提交记录</td></tr>}
                   </tbody>
                 </table></div>
               </>
@@ -784,6 +887,7 @@ export function App() {
             if (selectedProjectId) await loadProjectDetail(selectedProjectId);
           }, '预留成功');
         }}>
+          <p className="subtle">预留只占用可用库存（在手-预留），不会直接占用在途库存。</p>
           <select value={reserveForm.projectId} onChange={(e) => setReserveForm({ ...reserveForm, projectId: e.target.value ? Number(e.target.value) : '' })}><option value="">选择项目</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.project_code} / {p.project_name}</option>)}</select>
           <select value={reserveForm.productId} onChange={(e) => setReserveForm({ ...reserveForm, productId: e.target.value ? Number(e.target.value) : '' })}><option value="">选择SKU</option>{products.map((p) => <option key={p.id} value={p.id}>{p.sku} / {p.name}</option>)}</select>
           <input type="number" placeholder="预留数量" value={reserveForm.qty} onChange={(e) => setReserveForm({ ...reserveForm, qty: e.target.value ? Number(e.target.value) : '' })} />
@@ -905,6 +1009,39 @@ export function App() {
         </form>
       </Modal>
 
+      <Modal open={modal === 'commitEdit'} title="编辑项目Commit" onClose={() => setModal(null)}>
+        <form className="form" onSubmit={(e) => {
+          e.preventDefault();
+          if (!selectedProjectId) return setMsg('error', '请先进入项目详情');
+          if (!isPositive(editCommitForm.commitId)) return setMsg('error', '请选择要编辑的Commit');
+          if (!editCommitForm.title.trim() || !editCommitForm.content.trim()) return setMsg('error', '标题和内容不能为空');
+          void runAction(async () => {
+            await apiClient.updateProjectCommit(
+              selectedProjectId,
+              toNum(editCommitForm.commitId),
+              {
+                title: editCommitForm.title.trim(),
+                content: editCommitForm.content.trim(),
+                status_to: editCommitForm.statusTo,
+                progress_pct: Number(editCommitForm.progress),
+              },
+            );
+            await loadBase();
+            await loadProjectDetail(selectedProjectId);
+          }, 'Commit更新成功');
+        }}>
+          <input value={selectedProject?.project_code || ''} readOnly />
+          <input value={editCommitForm.commitId} readOnly />
+          <input placeholder="标题" value={editCommitForm.title} onChange={(e) => setEditCommitForm({ ...editCommitForm, title: e.target.value })} />
+          <textarea placeholder="内容" value={editCommitForm.content} onChange={(e) => setEditCommitForm({ ...editCommitForm, content: e.target.value })} />
+          <div className="row2">
+            <select value={editCommitForm.statusTo} onChange={(e) => setEditCommitForm({ ...editCommitForm, statusTo: e.target.value as (typeof projectStatusOptions)[number] })}>{projectStatusOptions.map((s) => <option key={s} value={s}>{projectStatusLabel(s)}</option>)}</select>
+            <input type="number" min={0} max={100} value={editCommitForm.progress} onChange={(e) => setEditCommitForm({ ...editCommitForm, progress: Number(e.target.value) })} />
+          </div>
+          <button type="submit">提交</button>
+        </form>
+      </Modal>
+
       <Modal open={modal === 'user'} title="新增用户" onClose={() => setModal(null)}>
         <form className="form" onSubmit={(e) => {
           e.preventDefault();
@@ -974,6 +1111,33 @@ function ToastStack(props: { toasts: Toast[]; onClose: (id: number) => void }) {
           <button className="toast-close" onClick={() => onClose(item.id)}>关闭</button>
         </div>
       ))}
+    </div>
+  );
+}
+
+function Pager(props: {
+  total: number;
+  page: number;
+  pageCount: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (size: number) => void;
+}) {
+  const { total, page, pageCount, pageSize, onPageChange, onPageSizeChange } = props;
+  if (total <= 0) return null;
+  return (
+    <div className="pager">
+      <div className="pager-left">
+        <span>共 {total} 条</span>
+        <select value={pageSize} onChange={(e) => onPageSizeChange(Number(e.target.value))}>
+          {PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>每页 {size} 条</option>)}
+        </select>
+      </div>
+      <div className="pager-right">
+        <button type="button" className="back-btn" onClick={() => onPageChange(Math.max(1, page - 1))} disabled={page <= 1}>上一页</button>
+        <span>{page} / {pageCount}</span>
+        <button type="button" className="back-btn" onClick={() => onPageChange(Math.min(pageCount, page + 1))} disabled={page >= pageCount}>下一页</button>
+      </div>
     </div>
   );
 }

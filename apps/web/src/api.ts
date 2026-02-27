@@ -176,6 +176,22 @@ export class ApiClient {
     });
   }
 
+  updateProjectCommit(
+    projectId: number,
+    commitId: number,
+    payload: {
+      title: string;
+      content: string;
+      status_to: 'planned' | 'active' | 'blocked' | 'done' | 'cancelled';
+      progress_pct?: number;
+    },
+  ) {
+    return this.request(`/api/projects/${projectId}/commits/${commitId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
   listInventorySummary() {
     return this.request<InventoryItem[]>('/api/inventory/summary');
   }
