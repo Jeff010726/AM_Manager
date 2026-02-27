@@ -118,7 +118,6 @@ export function App() {
     categoryId: '' as NumInput,
     unit: 'pcs',
     spec: '',
-    safetyStock: 0,
   });
   const [projectForm, setProjectForm] = useState({ code: '', name: '', ownerId: '' as NumInput, note: '' });
   const [memberForm, setMemberForm] = useState({ userId: '' as NumInput, projectRole: '成员' });
@@ -498,15 +497,15 @@ export function App() {
             </div>
             <div className="table-wrap">
               <table>
-                <thead><tr><th>SKU编号</th><th>产品名称</th><th>分类</th><th>产品型号/规格</th><th>单位</th><th>安全库存</th><th>状态</th>{isAdmin && <th>操作</th>}</tr></thead>
+                <thead><tr><th>SKU编号</th><th>产品名称</th><th>分类</th><th>产品型号/规格</th><th>单位</th><th>状态</th>{isAdmin && <th>操作</th>}</tr></thead>
                 <tbody>
                   {pagedSkuRows.map((item) => (
                     <tr key={item.id}>
-                      <td>{item.sku}</td><td>{item.name}</td><td>{item.category_name}</td><td>{item.spec || '-'}</td><td>{item.unit}</td><td>{item.safety_stock_qty}</td><td>{item.status}</td>
+                      <td>{item.sku}</td><td>{item.name}</td><td>{item.category_name}</td><td>{item.spec || '-'}</td><td>{item.unit}</td><td>{item.status}</td>
                       {isAdmin && <td><button className="text-btn" onClick={() => void loadInventoryDetail(item.id)}>库存详情</button><button className="text-btn danger" onClick={() => void deleteSku(item)}>删除</button></td>}
                     </tr>
                   ))}
-                  {skuRows.length === 0 && <tr><td colSpan={isAdmin ? 8 : 7} className="empty-cell">暂无SKU数据</td></tr>}
+                  {skuRows.length === 0 && <tr><td colSpan={isAdmin ? 7 : 6} className="empty-cell">暂无SKU数据</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -569,15 +568,15 @@ export function App() {
               <>
                 <div className="table-wrap">
                   <table>
-                    <thead><tr><th>SKU</th><th>名称</th><th>总库存</th><th>在途</th><th>在手</th><th>可用</th><th>预留</th><th>已消耗</th><th>安全库存</th><th>缺口</th></tr></thead>
+                    <thead><tr><th>SKU</th><th>名称</th><th>总库存</th><th>在途</th><th>在手</th><th>可用</th><th>预留</th><th>已消耗</th></tr></thead>
                     <tbody>
                       {pagedInventoryRows.map((item) => (
                         <tr key={item.product_id}>
                           <td><button className="link-btn" onClick={() => void loadInventoryDetail(item.product_id)}>{item.sku}</button></td>
-                          <td>{item.name}</td><td>{item.total_stock_qty}</td><td>{item.in_transit_qty}</td><td>{item.on_hand_qty}</td><td>{item.available_qty}</td><td>{item.reserved_qty}</td><td>{item.consumed_qty}</td><td>{item.safety_stock_qty}</td><td>{item.shortage_qty}</td>
+                          <td>{item.name}</td><td>{item.total_stock_qty}</td><td>{item.in_transit_qty}</td><td>{item.on_hand_qty}</td><td>{item.available_qty}</td><td>{item.reserved_qty}</td><td>{item.consumed_qty}</td>
                         </tr>
                       ))}
-                      {inventoryRows.length === 0 && <tr><td colSpan={10} className="empty-cell">暂无库存数据</td></tr>}
+                      {inventoryRows.length === 0 && <tr><td colSpan={8} className="empty-cell">暂无库存数据</td></tr>}
                     </tbody>
                   </table>
                 </div>
@@ -622,8 +621,6 @@ export function App() {
                       <span>可用</span><strong>{selectedInventoryBalance.available_qty}</strong>
                       <span>预留</span><strong>{selectedInventoryBalance.reserved_qty}</strong>
                       <span>已消耗</span><strong>{selectedInventoryBalance.consumed_qty}</strong>
-                      <span>安全库存</span><strong>{selectedInventoryBalance.safety_stock_qty}</strong>
-                      <span>缺口</span><strong>{selectedInventoryBalance.shortage_qty}</strong>
                     </div>
                   </section>
                 </div>
@@ -801,10 +798,10 @@ export function App() {
               category_id: toNum(skuForm.categoryId),
               unit: skuForm.unit.trim() || 'pcs',
               spec: skuForm.spec.trim(),
-              safety_stock_qty: Number(skuForm.safetyStock),
+              safety_stock_qty: 0,
               status: 'active',
             });
-            setSkuForm({ sku: '', name: '', categoryId: '', unit: 'pcs', spec: '', safetyStock: 0 });
+            setSkuForm({ sku: '', name: '', categoryId: '', unit: 'pcs', spec: '' });
             await loadBase();
           }, 'SKU创建成功');
         }}>
@@ -814,10 +811,7 @@ export function App() {
             <option value="">选择分类</option>
             {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
-          <div className="row2">
-            <input placeholder="单位" value={skuForm.unit} onChange={(e) => setSkuForm({ ...skuForm, unit: e.target.value })} />
-            <input type="number" placeholder="安全库存" value={skuForm.safetyStock} onChange={(e) => setSkuForm({ ...skuForm, safetyStock: Number(e.target.value) })} />
-          </div>
+          <input placeholder="单位" value={skuForm.unit} onChange={(e) => setSkuForm({ ...skuForm, unit: e.target.value })} />
           <input placeholder="产品型号/规格" value={skuForm.spec} onChange={(e) => setSkuForm({ ...skuForm, spec: e.target.value })} />
           <button type="submit">提交</button>
         </form>
