@@ -83,6 +83,22 @@ export type ProjectCommit = {
   created_at: string;
 };
 
+export type ProjectReservation = {
+  reservation_id: number;
+  project_id: number;
+  product_id: number;
+  sku: string;
+  product_name: string;
+  unit: string;
+  qty: number;
+  consumed_qty: number;
+  released_qty: number;
+  remaining_qty: number;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type InventoryItem = {
   product_id: number;
   sku: string;

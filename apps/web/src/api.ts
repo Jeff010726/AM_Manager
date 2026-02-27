@@ -7,6 +7,7 @@
   Project,
   ProjectCommit,
   ProjectMember,
+  ProjectReservation,
   Role,
   User,
 } from './types';
@@ -129,6 +130,10 @@ export class ApiClient {
 
   listProjectCommits(projectId: number) {
     return this.request<ProjectCommit[]>(`/api/projects/${projectId}/commits`);
+  }
+
+  listProjectReservations(projectId: number) {
+    return this.request<ProjectReservation[]>(`/api/projects/${projectId}/reservations`);
   }
 
   createProjectCommit(

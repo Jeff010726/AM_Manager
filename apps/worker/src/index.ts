@@ -246,6 +246,10 @@ app.post('/api/products', async (c) => {
   const body = schema.safeParse(await c.req.json().catch(() => ({})));
   if (!body.success) return apiError(c, 400, 'INVALID_PARAMS', body.error.issues[0]?.message || 'Invalid payload');
 
+  if (!(await existsById(c.env.DB, 'categories', body.data.category_id))) {
+    return apiError(c, 404, 'NOT_FOUND', 'Category not found');
+  }
+
   try {
     const run = await c.env.DB.prepare(
       `INSERT INTO products (sku, name, category_id, unit, spec, safety_stock_qty, status, created_at, updated_at)
@@ -292,6 +296,10 @@ app.put('/api/products/:id', async (c) => {
   const body = schema.safeParse(await c.req.json().catch(() => ({})));
   if (!body.success) return apiError(c, 400, 'INVALID_PARAMS', body.error.issues[0]?.message || 'Invalid payload');
 
+  if (!(await existsById(c.env.DB, 'categories', body.data.category_id))) {
+    return apiError(c, 404, 'NOT_FOUND', 'Category not found');
+  }
+
   await c.env.DB.prepare(
     `UPDATE products
      SET name = ?, category_id = ?, unit = ?, spec = ?, safety_stock_qty = ?, status = ?, updated_at = ?
@@ -337,6 +345,10 @@ app.post('/api/projects', async (c) => {
   });
   const body = schema.safeParse(await c.req.json().catch(() => ({})));
   if (!body.success) return apiError(c, 400, 'INVALID_PARAMS', body.error.issues[0]?.message || 'Invalid payload');
+
+  if (!(await existsById(c.env.DB, 'users', body.data.owner_user_id))) {
+    return apiError(c, 404, 'NOT_FOUND', 'Owner user not found');
+  }
 
   try {
     const run = await c.env.DB.prepare(
@@ -397,6 +409,10 @@ app.put('/api/projects/:id', async (c) => {
   const body = schema.safeParse(await c.req.json().catch(() => ({})));
   if (!body.success) return apiError(c, 400, 'INVALID_PARAMS', body.error.issues[0]?.message || 'Invalid payload');
 
+  if (!(await existsById(c.env.DB, 'users', body.data.owner_user_id))) {
+    return apiError(c, 404, 'NOT_FOUND', 'Owner user not found');
+  }
+
   await c.env.DB.prepare(
     `UPDATE projects
      SET project_name = ?, owner_user_id = ?, start_date = ?, end_date = ?, note = ?, updated_at = ?
@@ -417,6 +433,9 @@ app.post('/api/projects/:id/material-plans', async (c) => {
   const body = schema.safeParse(await c.req.json().catch(() => ({})));
   if (!body.success) return apiError(c, 400, 'INVALID_PARAMS', body.error.issues[0]?.message || 'Invalid payload');
 
+  if (!(await existsById(c.env.DB, 'projects', id))) return apiError(c, 404, 'NOT_FOUND', 'Project not found');
+  if (!(await existsById(c.env.DB, 'products', body.data.product_id))) return apiError(c, 404, 'NOT_FOUND', 'Product not found');
+
   await c.env.DB.prepare(
     `INSERT INTO project_material_plans (project_id, product_id, planned_qty, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?)
@@ -430,6 +449,7 @@ app.post('/api/projects/:id/material-plans', async (c) => {
 
 app.get('/api/projects/:id/materials', async (c) => {
   const id = Number(c.req.param('id'));
+  if (!(await existsById(c.env.DB, 'projects', id))) return apiError(c, 404, 'NOT_FOUND', 'Project not found');
   const rows = await c.env.DB.prepare(
     `SELECT pmp.product_id, p.sku, p.name, p.unit, pmp.planned_qty,
             COALESCE(SUM(pr.qty), 0) AS reserved_qty,
@@ -462,6 +482,24 @@ app.get('/api/projects/:id/members', async (c) => {
   return c.json({ success: true, data: rows.results || [] });
 });
 
+app.get('/api/projects/:id/reservations', async (c) => {
+  const id = Number(c.req.param('id'));
+  if (!(await existsById(c.env.DB, 'projects', id))) return apiError(c, 404, 'NOT_FOUND', 'Project not found');
+  const rows = await c.env.DB.prepare(
+    `SELECT pr.id AS reservation_id, pr.project_id, pr.product_id, p.sku, p.name AS product_name, p.unit,
+            pr.qty, pr.consumed_qty, pr.released_qty,
+            (pr.qty - pr.consumed_qty - pr.released_qty) AS remaining_qty,
+            pr.status, pr.created_at, pr.updated_at
+     FROM project_reservations pr
+     JOIN products p ON p.id = pr.product_id
+     WHERE pr.project_id = ?
+     ORDER BY pr.id DESC`,
+  )
+    .bind(id)
+    .all();
+  return c.json({ success: true, data: rows.results || [] });
+});
+
 app.post('/api/projects/:id/members', async (c) => {
   const guard = requireAdmin(c);
   if (guard) return guard;
@@ -470,6 +508,9 @@ app.post('/api/projects/:id/members', async (c) => {
   const schema = z.object({ user_id: z.number().int().positive(), project_role: z.string().min(1) });
   const body = schema.safeParse(await c.req.json().catch(() => ({})));
   if (!body.success) return apiError(c, 400, 'INVALID_PARAMS', body.error.issues[0]?.message || 'Invalid payload');
+
+  if (!(await existsById(c.env.DB, 'projects', projectId))) return apiError(c, 404, 'NOT_FOUND', 'Project not found');
+  if (!(await existsById(c.env.DB, 'users', body.data.user_id))) return apiError(c, 404, 'NOT_FOUND', 'User not found');
 
   try {
     await c.env.DB.prepare('INSERT INTO project_members (project_id, user_id, project_role, joined_at) VALUES (?, ?, ?, ?)')
@@ -660,6 +701,7 @@ app.post('/api/inventory/inbound', async (c) => {
   if (guard) return guard;
   const body = await parseInventoryBody(c, z.object({ product_id: z.number().int().positive(), qty: z.number().int().positive(), reason: z.string().optional().nullable() }));
   if (body instanceof Response) return body;
+  if (!(await existsById(c.env.DB, 'products', body.product_id))) return apiError(c, 404, 'NOT_FOUND', 'Product not found');
 
   return withIdempotency(c, body.idempotency_key, '/inventory/inbound', async () => {
     await ensureBalanceRow(c.env.DB, body.product_id);
@@ -688,6 +730,7 @@ app.post('/api/inventory/outbound', async (c) => {
   if (guard) return guard;
   const body = await parseInventoryBody(c, z.object({ product_id: z.number().int().positive(), qty: z.number().int().positive(), reason: z.string().optional().nullable() }));
   if (body instanceof Response) return body;
+  if (!(await existsById(c.env.DB, 'products', body.product_id))) return apiError(c, 404, 'NOT_FOUND', 'Product not found');
 
   return withIdempotency(c, body.idempotency_key, '/inventory/outbound', async () => {
     await ensureBalanceRow(c.env.DB, body.product_id);
@@ -722,6 +765,7 @@ app.post('/api/inventory/transit/create', async (c) => {
   if (guard) return guard;
   const body = await parseInventoryBody(c, z.object({ product_id: z.number().int().positive(), qty: z.number().int().positive(), reason: z.string().optional().nullable() }));
   if (body instanceof Response) return body;
+  if (!(await existsById(c.env.DB, 'products', body.product_id))) return apiError(c, 404, 'NOT_FOUND', 'Product not found');
 
   return withIdempotency(c, body.idempotency_key, '/inventory/transit/create', async () => {
     await ensureBalanceRow(c.env.DB, body.product_id);
@@ -750,6 +794,7 @@ app.post('/api/inventory/transit/receive', async (c) => {
   if (guard) return guard;
   const body = await parseInventoryBody(c, z.object({ product_id: z.number().int().positive(), qty: z.number().int().positive(), reason: z.string().optional().nullable() }));
   if (body instanceof Response) return body;
+  if (!(await existsById(c.env.DB, 'products', body.product_id))) return apiError(c, 404, 'NOT_FOUND', 'Product not found');
 
   return withIdempotency(c, body.idempotency_key, '/inventory/transit/receive', async () => {
     await ensureBalanceRow(c.env.DB, body.product_id);
@@ -792,6 +837,7 @@ app.post('/api/inventory/reserve', async (c) => {
 
   const project = await c.env.DB.prepare('SELECT id FROM projects WHERE id = ?').bind(body.project_id).first();
   if (!project) return apiError(c, 404, 'NOT_FOUND', 'Project not found');
+  if (!(await existsById(c.env.DB, 'products', body.product_id))) return apiError(c, 404, 'NOT_FOUND', 'Product not found');
 
   return withIdempotency(c, body.idempotency_key, '/inventory/reserve', async () => {
     await ensureBalanceRow(c.env.DB, body.product_id);
@@ -962,6 +1008,7 @@ app.post('/api/inventory/adjust', async (c) => {
   });
   const body = await parseInventoryBody(c, schema);
   if (body instanceof Response) return body;
+  if (!(await existsById(c.env.DB, 'products', body.product_id))) return apiError(c, 404, 'NOT_FOUND', 'Product not found');
 
   return withIdempotency(c, body.idempotency_key, '/inventory/adjust', async () => {
     const run = await c.env.DB.prepare(
@@ -1136,6 +1183,12 @@ async function ensureBalanceRow(db: D1Database, productId: number) {
   )
     .bind(productId, now())
     .run();
+}
+
+async function existsById(db: D1Database, table: string, id: number) {
+  const safeTable = table.replace(/[^a-z_]/g, '');
+  const row = await db.prepare(`SELECT id FROM ${safeTable} WHERE id = ?`).bind(id).first();
+  return !!row;
 }
 
 async function getInventoryByProduct(db: D1Database, productId: number) {
