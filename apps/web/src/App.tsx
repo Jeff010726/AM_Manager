@@ -163,6 +163,7 @@ export function App() {
 
   const productById = useMemo(() => new Map(products.map((x) => [x.id, x])), [products]);
   const inventoryByProductId = useMemo(() => new Map(inventory.map((x) => [x.product_id, x])), [inventory]);
+  const categoryById = useMemo(() => new Map(categories.map((x) => [x.id, x])), [categories]);
   const categoryChildrenMap = useMemo(() => {
     const map = new Map<number, number[]>();
     for (const category of categories) {
@@ -532,18 +533,17 @@ export function App() {
             <h4 className="section-title">分类列表</h4>
             <div className="table-wrap">
               <table>
-                <thead><tr><th>序号</th><th>系统ID</th><th>分类名称</th><th>上级分类ID</th>{isAdmin && <th>操作</th>}</tr></thead>
+                <thead><tr><th>序号</th><th>分类名称</th><th>上级分类</th>{isAdmin && <th>操作</th>}</tr></thead>
                 <tbody>
                   {categories.map((cat, idx) => (
                     <tr key={cat.id}>
                       <td>{idx + 1}</td>
-                      <td>{cat.id}</td>
                       <td>{cat.name}</td>
-                      <td>{cat.parent_id ?? '-'}</td>
+                      <td>{cat.parent_id ? (categoryById.get(cat.parent_id)?.name || '-') : '-'}</td>
                       {isAdmin && <td><button className="text-btn danger" onClick={() => void deleteCategory(cat)}>删除</button></td>}
                     </tr>
                   ))}
-                  {categories.length === 0 && <tr><td colSpan={isAdmin ? 5 : 4} className="empty-cell">暂无分类数据</td></tr>}
+                  {categories.length === 0 && <tr><td colSpan={isAdmin ? 4 : 3} className="empty-cell">暂无分类数据</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -721,12 +721,11 @@ export function App() {
                 </table></div>
 
                 <h4 className="section-title">项目预留库存</h4>
-                <div className="table-wrap"><table><thead><tr><th>序号</th><th>系统预留ID</th><th>SKU</th><th>产品名称</th><th>预留数量</th><th>已消耗</th><th>已释放</th><th>剩余</th><th>状态</th></tr></thead>
+                <div className="table-wrap"><table><thead><tr><th>序号</th><th>SKU</th><th>产品名称</th><th>预留数量</th><th>已消耗</th><th>已释放</th><th>剩余</th><th>状态</th></tr></thead>
                   <tbody>
                     {projectReservations.map((r, idx) => (
                       <tr key={r.reservation_id}>
                         <td>{idx + 1}</td>
-                        <td>{r.reservation_id}</td>
                         <td>{r.sku}</td>
                         <td>{r.product_name}</td>
                         <td>{r.qty}</td>
@@ -736,7 +735,7 @@ export function App() {
                         <td>{r.status}</td>
                       </tr>
                     ))}
-                    {projectReservations.length === 0 && <tr><td colSpan={9} className="empty-cell">暂无预留记录</td></tr>}
+                    {projectReservations.length === 0 && <tr><td colSpan={8} className="empty-cell">暂无预留记录</td></tr>}
                   </tbody>
                 </table></div>
 
@@ -776,11 +775,11 @@ export function App() {
             </div>
             <div className="table-wrap">
               <table>
-                <thead><tr><th>序号</th><th>系统ID</th><th>姓名</th><th>邮箱</th><th>角色</th><th>状态</th><th>操作</th></tr></thead>
+                <thead><tr><th>序号</th><th>姓名</th><th>邮箱</th><th>角色</th><th>状态</th><th>操作</th></tr></thead>
                 <tbody>
                   {userRows.map((u, idx) => (
                     <tr key={u.id}>
-                      <td>{idx + 1}</td><td>{u.id}</td><td>{u.name}</td><td>{u.email}</td><td>{roleLabel(u.role)}</td><td>{u.status}</td>
+                      <td>{idx + 1}</td><td>{u.name}</td><td>{u.email}</td><td>{roleLabel(u.role)}</td><td>{u.status}</td>
                       <td>
                         {u.id !== me?.id ? (
                           <>
@@ -791,7 +790,7 @@ export function App() {
                       </td>
                     </tr>
                   ))}
-                  {userRows.length === 0 && <tr><td colSpan={7} className="empty-cell">暂无用户数据</td></tr>}
+                  {userRows.length === 0 && <tr><td colSpan={6} className="empty-cell">暂无用户数据</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -939,7 +938,7 @@ export function App() {
             <option value="">选择项目</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.project_code} / {p.project_name}</option>)}
           </select>
           <select value={releaseForm.reservationId} onChange={(e) => setReleaseForm({ ...releaseForm, reservationId: e.target.value ? Number(e.target.value) : '' })}>
-            <option value="">选择预留记录</option>{releaseProjectReservations.filter((r) => r.remaining_qty > 0).map((r, idx) => <option key={r.reservation_id} value={r.reservation_id}>序号{idx + 1} / ID {r.reservation_id} / {r.sku} / 剩余{r.remaining_qty}</option>)}
+            <option value="">选择预留记录</option>{releaseProjectReservations.filter((r) => r.remaining_qty > 0).map((r, idx) => <option key={r.reservation_id} value={r.reservation_id}>序号{idx + 1} / {r.sku} / 剩余{r.remaining_qty}</option>)}
           </select>
           <input type="number" placeholder="释放数量" value={releaseForm.qty} onChange={(e) => setReleaseForm({ ...releaseForm, qty: e.target.value ? Number(e.target.value) : '' })} />
           <input placeholder="释放备注" value={releaseForm.reason} onChange={(e) => setReleaseForm({ ...releaseForm, reason: e.target.value })} />
@@ -963,7 +962,7 @@ export function App() {
             <option value="">选择项目</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.project_code} / {p.project_name}</option>)}
           </select>
           <select value={consumeForm.reservationId} onChange={(e) => setConsumeForm({ ...consumeForm, reservationId: e.target.value ? Number(e.target.value) : '' })}>
-            <option value="">选择预留记录</option>{consumeProjectReservations.filter((r) => r.remaining_qty > 0).map((r, idx) => <option key={r.reservation_id} value={r.reservation_id}>序号{idx + 1} / ID {r.reservation_id} / {r.sku} / 剩余{r.remaining_qty}</option>)}
+            <option value="">选择预留记录</option>{consumeProjectReservations.filter((r) => r.remaining_qty > 0).map((r, idx) => <option key={r.reservation_id} value={r.reservation_id}>序号{idx + 1} / {r.sku} / 剩余{r.remaining_qty}</option>)}
           </select>
           <input type="number" placeholder="消耗数量" value={consumeForm.qty} onChange={(e) => setConsumeForm({ ...consumeForm, qty: e.target.value ? Number(e.target.value) : '' })} />
           <input placeholder="出库备注" value={consumeForm.note} onChange={(e) => setConsumeForm({ ...consumeForm, note: e.target.value })} />
@@ -1052,7 +1051,6 @@ export function App() {
           }, 'Commit更新成功');
         }}>
           <input value={selectedProject?.project_code || ''} readOnly />
-          <input value={editCommitForm.commitId} readOnly />
           <input placeholder="标题" value={editCommitForm.title} onChange={(e) => setEditCommitForm({ ...editCommitForm, title: e.target.value })} />
           <textarea placeholder="内容" value={editCommitForm.content} onChange={(e) => setEditCommitForm({ ...editCommitForm, content: e.target.value })} />
           <div className="row2">
