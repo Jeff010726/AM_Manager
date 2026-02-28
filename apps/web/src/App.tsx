@@ -555,7 +555,7 @@ export function App() {
             <div className="toolbar">
               <div>
                 <h3>库存台账</h3>
-                <p className="subtle">点击SKU进入详情查看流水。预留按可用库存计算（可用=在手-预留，在途不计可用）。</p>
+                <p className="subtle">点击SKU进入详情查看流水。预留按可用库存计算（可用=在手-预留；在途不计可用）。</p>
               </div>
               <div className="tools">
                 {isAdmin && (
