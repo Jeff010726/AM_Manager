@@ -41,6 +41,7 @@
 - 分类与 SKU：
   - `GET/POST /api/categories`
   - `GET/POST /api/products`
+  - `PUT /api/products/:id`
   - `DELETE /api/products/:id`
 - 项目：
   - `GET/POST /api/projects`

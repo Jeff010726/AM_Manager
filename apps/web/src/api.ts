@@ -133,6 +133,23 @@ export class ApiClient {
     });
   }
 
+  updateProduct(
+    productId: number,
+    payload: {
+      name: string;
+      category_id: number;
+      unit: string;
+      spec?: string;
+      safety_stock_qty: number;
+      status: 'active' | 'inactive';
+    },
+  ) {
+    return this.request<{ id: number }>(`/api/products/${productId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
   deleteProduct(productId: number) {
     return this.request<{ id: number }>(`/api/products/${productId}`, {
       method: 'DELETE',

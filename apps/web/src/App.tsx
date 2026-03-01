@@ -22,6 +22,7 @@ type ModalType =
   | null
   | 'category'
   | 'sku'
+  | 'skuEdit'
   | 'inbound'
   | 'outbound'
   | 'transitCreate'
@@ -136,6 +137,16 @@ export function App() {
     categoryId: '' as NumInput,
     unit: 'pcs',
     spec: '',
+  });
+  const [skuEditForm, setSkuEditForm] = useState({
+    id: '' as NumInput,
+    sku: '',
+    name: '',
+    categoryId: '' as NumInput,
+    unit: 'pcs',
+    spec: '',
+    safetyStockQty: 0 as NumInput,
+    status: 'active' as 'active' | 'inactive',
   });
   const [projectForm, setProjectForm] = useState({ code: '', name: '', ownerId: '' as NumInput, note: '' });
   const [memberForm, setMemberForm] = useState({ userId: '' as NumInput, projectRole: '成员' });
@@ -359,6 +370,44 @@ export function App() {
     }, 'SKU删除成功', false);
   }
 
+  function openSkuEditor(item: Product) {
+    setSkuEditForm({
+      id: item.id,
+      sku: item.sku,
+      name: item.name,
+      categoryId: item.category_id,
+      unit: item.unit,
+      spec: item.spec || '',
+      safetyStockQty: item.safety_stock_qty,
+      status: item.status === 'inactive' ? 'inactive' : 'active',
+    });
+    setModal('skuEdit');
+  }
+
+  async function updateSku() {
+    if (!isPositive(skuEditForm.id)) return setMsg('error', 'SKU记录无效');
+    if (!skuEditForm.name.trim()) return setMsg('error', '产品名称不能为空');
+    if (!isPositive(skuEditForm.categoryId)) return setMsg('error', '请选择分类');
+    const safetyStockQty = toNum(skuEditForm.safetyStockQty);
+    if (!Number.isInteger(safetyStockQty) || safetyStockQty < 0) return setMsg('error', '安全库存必须为非负整数');
+
+    await runAction(async () => {
+      await apiClient.updateProduct(toNum(skuEditForm.id), {
+        name: skuEditForm.name.trim(),
+        category_id: toNum(skuEditForm.categoryId),
+        unit: skuEditForm.unit.trim() || 'pcs',
+        spec: skuEditForm.spec.trim(),
+        safety_stock_qty: safetyStockQty,
+        status: skuEditForm.status,
+      });
+      setSkuEditForm({ id: '', sku: '', name: '', categoryId: '', unit: 'pcs', spec: '', safetyStockQty: 0, status: 'active' });
+      await loadBase();
+      if (selectedInventoryProductId === toNum(skuEditForm.id)) {
+        await loadInventoryDetail(toNum(skuEditForm.id));
+      }
+    }, 'SKU更新成功');
+  }
+
   async function deleteCategory(item: Category) {
     const categoryIds = getDescendantCategoryIds(item.id);
     const productCount = products.filter((x) => categoryIds.includes(x.category_id)).length;
@@ -509,6 +558,7 @@ export function App() {
     setReserveForm({ projectId: '', productId: '', qty: '', reason: '' });
     setReleaseForm({ reservationId: '', qty: '', reason: '' });
     setConsumeForm({ reservationId: '', qty: '', note: '' });
+    setSkuEditForm({ id: '', sku: '', name: '', categoryId: '', unit: 'pcs', spec: '', safetyStockQty: 0, status: 'active' });
     setEditCommitForm({ commitId: '', title: '', content: '', statusTo: 'active', progress: 0 });
     setSkuPage(1);
     setInventoryPage(1);
@@ -573,7 +623,13 @@ export function App() {
                   {pagedSkuRows.map((item) => (
                     <tr key={item.id}>
                       <td>{item.sku}</td><td>{item.name}</td><td>{item.category_name}</td><td>{item.spec || '-'}</td><td>{item.unit}</td><td>{item.status}</td>
-                      {isAdmin && <td><button className="text-btn" onClick={() => void loadInventoryDetail(item.id)}>库存详情</button><button className="text-btn danger" onClick={() => void deleteSku(item)}>删除</button></td>}
+                      {isAdmin && (
+                        <td>
+                          <button className="text-btn" onClick={() => openSkuEditor(item)}>编辑</button>
+                          <button className="text-btn" onClick={() => void loadInventoryDetail(item.id)}>库存详情</button>
+                          <button className="text-btn danger" onClick={() => void deleteSku(item)}>删除</button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                   {skuRows.length === 0 && <tr><td colSpan={isAdmin ? 7 : 6} className="empty-cell">暂无SKU数据</td></tr>}
@@ -923,6 +979,34 @@ export function App() {
           <input placeholder="单位" value={skuForm.unit} onChange={(e) => setSkuForm({ ...skuForm, unit: e.target.value })} />
           <input placeholder="产品型号/规格" value={skuForm.spec} onChange={(e) => setSkuForm({ ...skuForm, spec: e.target.value })} />
           <button type="submit">提交</button>
+        </form>
+      </Modal>
+
+      <Modal open={modal === 'skuEdit'} title="编辑SKU" onClose={() => setModal(null)}>
+        <form className="form" onSubmit={(e) => {
+          e.preventDefault();
+          void updateSku();
+        }}>
+          <input value={skuEditForm.sku} readOnly />
+          <input placeholder="产品名称" value={skuEditForm.name} onChange={(e) => setSkuEditForm({ ...skuEditForm, name: e.target.value })} />
+          <select value={skuEditForm.categoryId} onChange={(e) => setSkuEditForm({ ...skuEditForm, categoryId: e.target.value ? Number(e.target.value) : '' })}>
+            <option value="">选择分类</option>
+            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <input placeholder="单位" value={skuEditForm.unit} onChange={(e) => setSkuEditForm({ ...skuEditForm, unit: e.target.value })} />
+          <input placeholder="产品型号/规格" value={skuEditForm.spec} onChange={(e) => setSkuEditForm({ ...skuEditForm, spec: e.target.value })} />
+          <input
+            type="number"
+            min={0}
+            placeholder="安全库存"
+            value={skuEditForm.safetyStockQty}
+            onChange={(e) => setSkuEditForm({ ...skuEditForm, safetyStockQty: e.target.value ? Number(e.target.value) : 0 })}
+          />
+          <select value={skuEditForm.status} onChange={(e) => setSkuEditForm({ ...skuEditForm, status: e.target.value as 'active' | 'inactive' })}>
+            <option value="active">active</option>
+            <option value="inactive">inactive</option>
+          </select>
+          <button type="submit">保存</button>
         </form>
       </Modal>
 
