@@ -135,6 +135,9 @@ export type InventoryTransaction = {
   idempotency_key: string;
   request_id: string;
   created_at: string;
+  reverted_by_tx_id?: number | null;
+  superseded_by_tx_id?: number | null;
+  edited_from_tx_id?: number | null;
 };
 
 export type ApiEnvelope<T> = {

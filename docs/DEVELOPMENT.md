@@ -11,6 +11,7 @@
 - `admin` 拥有全部写权限；`visitor` 只读（项目 Commit 需为项目成员）。
 - 项目消耗必须先预留，不能绕过预留直接消耗。
 - 库存口径完整：总库存、在途、在手、可用、预留、已消耗、安全库存、缺口。
+- 库存流水支持审计型纠错：编辑会生成修正流水，撤销会生成反向流水，原流水保留。
 
 ## 3. 页面信息架构（Web）
 - `SKU主数据`：仅展示 SKU 主数据（SKU 编号、分类、型号/规格、单位、安全库存、状态），不展示库存数量。
@@ -52,6 +53,8 @@
 - 库存：
   - `GET /api/inventory/summary`
   - `GET /api/inventory/transactions?product_id=&limit=`
+  - `POST /api/inventory/transactions/:id/edit`
+  - `POST /api/inventory/transactions/:id/undo`
   - `POST /api/inventory/inbound`
   - `POST /api/inventory/transit/create`
   - `POST /api/inventory/transit/receive`

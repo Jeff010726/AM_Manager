@@ -36,6 +36,7 @@ type ModalType =
   | 'user';
 
 const projectStatusOptions = ['planned', 'active', 'blocked', 'done', 'cancelled'] as const;
+const inventoryManualFixTypes = new Set(['INBOUND', 'OUTBOUND', 'TRANSIT_CREATE', 'TRANSIT_RECEIVE', 'ADJUST']);
 
 const operationTypeLabel: Record<string, string> = {
   INBOUND: '入库',
@@ -46,6 +47,8 @@ const operationTypeLabel: Record<string, string> = {
   RELEASE: '释放预留',
   CONSUME: '项目消耗',
   ADJUST: '库存调整',
+  EDIT_ADJUST: '编辑修正',
+  UNDO: '撤销',
 };
 
 function toNum(value: NumInput) {
@@ -77,6 +80,21 @@ function projectStatusLabel(status: string) {
     cancelled: '已取消',
   };
   return map[status] || status;
+}
+
+function canManualFixInventoryTx(tx: InventoryTransaction) {
+  if (tx.reverted_by_tx_id) return false;
+  if (tx.project_id || tx.reservation_id) return false;
+  if (tx.edited_from_tx_id) return false;
+  return inventoryManualFixTypes.has(tx.operation_type);
+}
+
+function inventoryTxStatusLabel(tx: InventoryTransaction) {
+  if (tx.reverted_by_tx_id) return `已撤销 #${tx.reverted_by_tx_id}`;
+  if (tx.operation_type === 'UNDO') return tx.edited_from_tx_id ? `撤销记录 #${tx.edited_from_tx_id}` : '撤销记录';
+  if (tx.operation_type === 'EDIT_ADJUST') return tx.edited_from_tx_id ? `修正记录 #${tx.edited_from_tx_id}` : '修正记录';
+  if (tx.superseded_by_tx_id) return `已编辑 #${tx.superseded_by_tx_id}`;
+  return '有效';
 }
 
 export function App() {
@@ -358,6 +376,50 @@ export function App() {
     }, '分类删除成功', false);
   }
 
+  async function editInventoryTx(item: InventoryTransaction) {
+    if (!canManualFixInventoryTx(item)) {
+      setMsg('error', '该流水暂不支持编辑（仅支持入库/出库/在途类/库存调整，且不能关联项目预留记录）');
+      return;
+    }
+
+    const qtyRaw = window.prompt(`请输入新数量（当前：${item.qty}）`, String(item.qty));
+    if (qtyRaw === null) return;
+    const nextQty = Number(qtyRaw.trim());
+    if (!Number.isInteger(nextQty) || nextQty <= 0) {
+      setMsg('error', '数量必须为正整数');
+      return;
+    }
+
+    const reasonRaw = window.prompt('编辑备注（可留空）', item.reason || '');
+    if (reasonRaw === null) return;
+    const payload: { qty: number; reason?: string } = { qty: nextQty };
+    payload.reason = reasonRaw.trim();
+
+    await runAction(async () => {
+      await apiClient.editInventoryTransaction(item.id, payload);
+      await loadBase();
+      if (selectedInventoryProductId) await loadInventoryDetail(selectedInventoryProductId);
+    }, '流水编辑成功', false);
+  }
+
+  async function undoInventoryTx(item: InventoryTransaction) {
+    if (!canManualFixInventoryTx(item)) {
+      setMsg('error', '该流水暂不支持撤销（仅支持入库/出库/在途类/库存调整，且不能关联项目预留记录）');
+      return;
+    }
+
+    if (!window.confirm(`确认撤销流水 #${item.id} 吗？\n该操作会自动生成一条反向流水。`)) return;
+    const reasonRaw = window.prompt('撤销备注（可留空）', '');
+    if (reasonRaw === null) return;
+    const payload = reasonRaw.trim() ? { reason: reasonRaw.trim() } : undefined;
+
+    await runAction(async () => {
+      await apiClient.undoInventoryTransaction(item.id, payload);
+      await loadBase();
+      if (selectedInventoryProductId) await loadInventoryDetail(selectedInventoryProductId);
+    }, '流水撤销成功', false);
+  }
+
   async function deleteProject(item: Project) {
     if (!window.confirm(`确认删除项目 ${item.project_code} / ${item.project_name} 吗？\n系统会自动释放该项目未消耗的预留库存。`)) return;
     await runAction(async () => {
@@ -636,15 +698,36 @@ export function App() {
                 <h4 className="section-title">库存流水</h4>
                 <div className="table-wrap">
                   <table>
-                    <thead><tr><th>时间</th><th>类型</th><th>数量</th><th>在手变化</th><th>在途变化</th><th>预留变化</th><th>消耗变化</th><th>关联项目</th><th>备注</th><th>操作人</th></tr></thead>
+                    <thead><tr><th>ID</th><th>时间</th><th>类型</th><th>数量</th><th>在手变化</th><th>在途变化</th><th>预留变化</th><th>消耗变化</th><th>关联项目</th><th>备注</th><th>状态</th><th>操作人</th>{isAdmin && <th>操作</th>}</tr></thead>
                     <tbody>
                       {inventoryTransactions.map((tx) => (
                         <tr key={tx.id}>
-                          <td>{fmtDateTime(tx.created_at)}</td><td>{operationTypeLabel[tx.operation_type] || tx.operation_type}</td><td>{tx.qty}</td><td>{tx.delta_on_hand}</td><td>{tx.delta_in_transit}</td><td>{tx.delta_reserved}</td><td>{tx.delta_consumed}</td><td>{tx.project_code ? `${tx.project_code} / ${tx.project_name || ''}` : '-'}</td><td>{tx.reason || '-'}</td><td>{tx.actor_name}</td>
+                          <td>{tx.id}</td>
+                          <td>{fmtDateTime(tx.created_at)}</td>
+                          <td>{operationTypeLabel[tx.operation_type] || tx.operation_type}</td>
+                          <td>{tx.qty}</td>
+                          <td>{tx.delta_on_hand}</td>
+                          <td>{tx.delta_in_transit}</td>
+                          <td>{tx.delta_reserved}</td>
+                          <td>{tx.delta_consumed}</td>
+                          <td>{tx.project_code ? `${tx.project_code} / ${tx.project_name || ''}` : '-'}</td>
+                          <td>{tx.reason || '-'}</td>
+                          <td>{inventoryTxStatusLabel(tx)}</td>
+                          <td>{tx.actor_name}</td>
+                          {isAdmin && (
+                            <td>
+                              {canManualFixInventoryTx(tx) && (
+                                <>
+                                  <button className="text-btn" onClick={() => void editInventoryTx(tx)}>编辑</button>
+                                  <button className="text-btn danger" onClick={() => void undoInventoryTx(tx)}>撤销</button>
+                                </>
+                              )}
+                            </td>
+                          )}
                         </tr>
                       ))}
-                      {inventoryTransactions.length === 0 && !inventoryDetailLoading && <tr><td colSpan={10} className="empty-cell">暂无流水记录</td></tr>}
-                      {inventoryDetailLoading && <tr><td colSpan={10} className="empty-cell">流水加载中...</td></tr>}
+                      {inventoryTransactions.length === 0 && !inventoryDetailLoading && <tr><td colSpan={isAdmin ? 13 : 12} className="empty-cell">暂无流水记录</td></tr>}
+                      {inventoryDetailLoading && <tr><td colSpan={isAdmin ? 13 : 12} className="empty-cell">流水加载中...</td></tr>}
                     </tbody>
                   </table>
                 </div>

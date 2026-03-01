@@ -210,6 +210,20 @@ export class ApiClient {
     return this.request<InventoryTransaction[]>(`/api/inventory/transactions${query}`);
   }
 
+  editInventoryTransaction(txId: number, payload: { qty?: number; reason?: string }) {
+    return this.request(`/api/inventory/transactions/${txId}/edit`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  undoInventoryTransaction(txId: number, payload?: { reason?: string }) {
+    return this.request(`/api/inventory/transactions/${txId}/undo`, {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    });
+  }
+
   reserve(payload: { project_id: number; product_id: number; qty: number; reason?: string }) {
     return this.request('/api/inventory/reserve', {
       method: 'POST',

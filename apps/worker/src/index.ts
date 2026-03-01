@@ -27,6 +27,28 @@ type AppBindings = {
 const app = new Hono<AppBindings>();
 
 const projectStatusEnum = z.enum(['planned', 'active', 'blocked', 'done', 'cancelled']);
+const inventoryManualFixTypes = new Set(['INBOUND', 'OUTBOUND', 'TRANSIT_CREATE', 'TRANSIT_RECEIVE', 'ADJUST']);
+
+type InventoryTxRow = {
+  id: number;
+  product_id: number;
+  operation_type: string;
+  qty: number;
+  delta_on_hand: number;
+  delta_in_transit: number;
+  delta_reserved: number;
+  delta_consumed: number;
+  project_id: number | null;
+  reservation_id: number | null;
+  reason: string | null;
+  actor_user_id: number;
+  idempotency_key: string;
+  request_id: string;
+  created_at: string;
+  reverted_by_tx_id: number | null;
+  superseded_by_tx_id: number | null;
+  edited_from_tx_id: number | null;
+};
 
 app.use('*', async (c, next) => {
   const requestId = c.req.header('x-request-id') || crypto.randomUUID();
@@ -971,6 +993,7 @@ app.get('/api/inventory/transactions', async (c) => {
     `SELECT it.id, it.product_id, p.sku, p.name AS product_name, it.operation_type, it.qty, it.delta_on_hand, it.delta_in_transit,
             it.delta_reserved, it.delta_consumed, it.project_id, it.reservation_id, it.reason, it.actor_user_id,
             u.name AS actor_name, it.idempotency_key, it.request_id, it.created_at,
+            it.reverted_by_tx_id, it.superseded_by_tx_id, it.edited_from_tx_id,
             prj.project_code, prj.project_name
      FROM inventory_transactions it
      JOIN products p ON p.id = it.product_id
@@ -983,6 +1006,180 @@ app.get('/api/inventory/transactions', async (c) => {
     .bind(productId, productId, limit)
     .all();
   return c.json({ success: true, data: result.results || [] });
+});
+
+app.post('/api/inventory/transactions/:id/undo', async (c) => {
+  const guard = requireAdmin(c);
+  if (guard) return guard;
+
+  const txId = Number(c.req.param('id'));
+  if (!Number.isInteger(txId) || txId <= 0) return apiError(c, 400, 'INVALID_PARAMS', 'Invalid transaction id');
+
+  const bodySchema = z.object({ reason: z.string().max(300).optional().nullable() });
+  const body = bodySchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!body.success) return apiError(c, 400, 'INVALID_PARAMS', body.error.issues[0]?.message || 'Invalid payload');
+
+  const tx = await getInventoryTxById(c.env.DB, txId);
+  if (!tx) return apiError(c, 404, 'NOT_FOUND', 'Transaction not found');
+  if (tx.reverted_by_tx_id) return apiError(c, 409, 'TX_ALREADY_REVERTED', 'This transaction has already been reverted');
+
+  const fixCheck = validateInventoryTxForManualFix(tx);
+  if (fixCheck) return apiError(c, 409, 'TX_NOT_SUPPORTED', fixCheck);
+
+  const applyRes = await applyInventoryBalanceDelta(
+    c.env.DB,
+    tx.product_id,
+    -tx.delta_on_hand,
+    -tx.delta_in_transit,
+    -tx.delta_reserved,
+    -tx.delta_consumed,
+  );
+  if (!applyRes.ok) return apiError(c, 409, 'INVALID_REVERT', applyRes.message);
+
+  const undoReason =
+    body.data.reason?.trim() ||
+    `撤销流水 #${tx.id}${tx.reason ? `（原备注：${tx.reason}）` : ''}`;
+  const undoTxId = await insertInventoryTx(c, {
+    product_id: tx.product_id,
+    operation_type: 'UNDO',
+    qty: tx.qty,
+    delta_on_hand: -tx.delta_on_hand,
+    delta_in_transit: -tx.delta_in_transit,
+    delta_reserved: -tx.delta_reserved,
+    delta_consumed: -tx.delta_consumed,
+    project_id: null,
+    reservation_id: null,
+    reason: undoReason,
+    idempotency_key: `inventory-tx-undo-${tx.id}-${crypto.randomUUID()}`,
+    edited_from_tx_id: tx.id,
+  });
+
+  await c.env.DB.prepare('UPDATE inventory_transactions SET reverted_by_tx_id = ? WHERE id = ?')
+    .bind(undoTxId, tx.id)
+    .run();
+  await writeAudit(c, 'inventory_tx.undo', 'inventory_transaction', String(tx.id), tx, {
+    undo_tx_id: undoTxId,
+    reason: undoReason,
+  });
+
+  return c.json({
+    success: true,
+    data: {
+      transaction_id: tx.id,
+      undo_tx_id: undoTxId,
+      inventory: await getInventoryByProduct(c.env.DB, tx.product_id),
+    },
+  });
+});
+
+app.post('/api/inventory/transactions/:id/edit', async (c) => {
+  const guard = requireAdmin(c);
+  if (guard) return guard;
+
+  const txId = Number(c.req.param('id'));
+  if (!Number.isInteger(txId) || txId <= 0) return apiError(c, 400, 'INVALID_PARAMS', 'Invalid transaction id');
+
+  const bodySchema = z.object({
+    qty: z.number().int().positive().optional(),
+    reason: z.string().max(300).optional().nullable(),
+  }).refine((v) => v.qty !== undefined || v.reason !== undefined, {
+    message: 'Either qty or reason is required',
+  });
+  const body = bodySchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!body.success) return apiError(c, 400, 'INVALID_PARAMS', body.error.issues[0]?.message || 'Invalid payload');
+
+  const tx = await getInventoryTxById(c.env.DB, txId);
+  if (!tx) return apiError(c, 404, 'NOT_FOUND', 'Transaction not found');
+  if (tx.reverted_by_tx_id) return apiError(c, 409, 'TX_ALREADY_REVERTED', 'Reverted transaction cannot be edited');
+
+  const nextReason = body.data.reason !== undefined ? (body.data.reason?.trim() || null) : tx.reason;
+  const before = { ...tx };
+
+  if (body.data.qty === undefined || body.data.qty === tx.qty) {
+    await c.env.DB.prepare('UPDATE inventory_transactions SET reason = ? WHERE id = ?')
+      .bind(nextReason, tx.id)
+      .run();
+    await writeAudit(c, 'inventory_tx.edit_reason', 'inventory_transaction', String(tx.id), before, { reason: nextReason });
+    return c.json({ success: true, data: { transaction_id: tx.id, corrected_tx_id: null } });
+  }
+
+  const fixCheck = validateInventoryTxForManualFix(tx);
+  if (fixCheck) return apiError(c, 409, 'TX_NOT_SUPPORTED', fixCheck);
+
+  const scaled = scaleInventoryTxDelta(tx, body.data.qty);
+  if (!scaled) return apiError(c, 409, 'TX_NOT_SUPPORTED', 'This transaction does not support quantity edits');
+
+  const diff = {
+    onHand: scaled.delta_on_hand - tx.delta_on_hand,
+    inTransit: scaled.delta_in_transit - tx.delta_in_transit,
+    reserved: scaled.delta_reserved - tx.delta_reserved,
+    consumed: scaled.delta_consumed - tx.delta_consumed,
+  };
+
+  if (diff.onHand || diff.inTransit || diff.reserved || diff.consumed) {
+    const applyRes = await applyInventoryBalanceDelta(
+      c.env.DB,
+      tx.product_id,
+      diff.onHand,
+      diff.inTransit,
+      diff.reserved,
+      diff.consumed,
+    );
+    if (!applyRes.ok) return apiError(c, 409, 'INVALID_EDIT', applyRes.message);
+  }
+
+  let correctedTxId: number | null = null;
+  if (diff.onHand || diff.inTransit || diff.reserved || diff.consumed) {
+    correctedTxId = await insertInventoryTx(c, {
+      product_id: tx.product_id,
+      operation_type: 'EDIT_ADJUST',
+      qty: Math.abs(body.data.qty - tx.qty),
+      delta_on_hand: diff.onHand,
+      delta_in_transit: diff.inTransit,
+      delta_reserved: diff.reserved,
+      delta_consumed: diff.consumed,
+      project_id: null,
+      reservation_id: null,
+      reason: `编辑流水 #${tx.id}：数量 ${tx.qty} -> ${body.data.qty}${nextReason ? `；备注：${nextReason}` : ''}`,
+      idempotency_key: `inventory-tx-edit-${tx.id}-${crypto.randomUUID()}`,
+      edited_from_tx_id: tx.id,
+    });
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE inventory_transactions
+     SET qty = ?, delta_on_hand = ?, delta_in_transit = ?, delta_reserved = ?, delta_consumed = ?, reason = ?, superseded_by_tx_id = ?
+     WHERE id = ?`,
+  )
+    .bind(
+      body.data.qty,
+      scaled.delta_on_hand,
+      scaled.delta_in_transit,
+      scaled.delta_reserved,
+      scaled.delta_consumed,
+      nextReason,
+      correctedTxId,
+      tx.id,
+    )
+    .run();
+
+  await writeAudit(c, 'inventory_tx.edit', 'inventory_transaction', String(tx.id), before, {
+    qty: body.data.qty,
+    delta_on_hand: scaled.delta_on_hand,
+    delta_in_transit: scaled.delta_in_transit,
+    delta_reserved: scaled.delta_reserved,
+    delta_consumed: scaled.delta_consumed,
+    reason: nextReason,
+    corrected_tx_id: correctedTxId,
+  });
+  return c.json({
+    success: true,
+    data: {
+      transaction_id: tx.id,
+      corrected_tx_id: correctedTxId,
+      inventory: await getInventoryByProduct(c.env.DB, tx.product_id),
+    },
+  });
 });
 
 app.get('/api/inventory/balances', async (c) => {
@@ -1393,7 +1590,8 @@ app.get('/api/reports/inventory-ledger', async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT it.id, it.product_id, p.sku, p.name AS product_name, it.operation_type, it.qty, it.delta_on_hand, it.delta_in_transit,
             it.delta_reserved, it.delta_consumed, it.project_id, it.reservation_id, it.reason, it.actor_user_id,
-            u.name AS actor_name, it.idempotency_key, it.request_id, it.created_at
+            u.name AS actor_name, it.idempotency_key, it.request_id, it.created_at,
+            it.reverted_by_tx_id, it.superseded_by_tx_id, it.edited_from_tx_id
      FROM inventory_transactions it
      JOIN products p ON p.id = it.product_id
      JOIN users u ON u.id = it.actor_user_id
@@ -1473,13 +1671,14 @@ async function insertInventoryTx(
     reservation_id: number | null;
     reason: string | null;
     idempotency_key: string;
+    edited_from_tx_id?: number | null;
   },
 ) {
   const user = c.get('authUser') as AuthUser;
-  await c.env.DB.prepare(
+  const run = await c.env.DB.prepare(
     `INSERT INTO inventory_transactions
-      (product_id, operation_type, qty, delta_on_hand, delta_in_transit, delta_reserved, delta_consumed, project_id, reservation_id, reason, actor_user_id, idempotency_key, request_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (product_id, operation_type, qty, delta_on_hand, delta_in_transit, delta_reserved, delta_consumed, project_id, reservation_id, reason, actor_user_id, idempotency_key, request_id, created_at, edited_from_tx_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       tx.product_id,
@@ -1496,8 +1695,116 @@ async function insertInventoryTx(
       tx.idempotency_key,
       c.get('requestId'),
       now(),
+      tx.edited_from_tx_id ?? null,
     )
     .run();
+  return Number(run.meta.last_row_id);
+}
+
+async function getInventoryTxById(db: D1Database, txId: number) {
+  const row = await db.prepare(
+    `SELECT id, product_id, operation_type, qty, delta_on_hand, delta_in_transit, delta_reserved, delta_consumed,
+            project_id, reservation_id, reason, actor_user_id, idempotency_key, request_id, created_at,
+            reverted_by_tx_id, superseded_by_tx_id, edited_from_tx_id
+     FROM inventory_transactions
+     WHERE id = ?`,
+  )
+    .bind(txId)
+    .first();
+  return (row || null) as InventoryTxRow | null;
+}
+
+function validateInventoryTxForManualFix(tx: InventoryTxRow) {
+  if (!inventoryManualFixTypes.has(tx.operation_type)) return '该类型流水暂不支持编辑/撤销';
+  if (tx.project_id || tx.reservation_id) return '关联项目预留/消耗的流水暂不支持编辑/撤销';
+  if (tx.edited_from_tx_id) return '系统生成的修正/撤销流水不可再次编辑/撤销';
+  return null;
+}
+
+function scaleInventoryTxDelta(tx: InventoryTxRow, nextQty: number) {
+  if (!Number.isInteger(nextQty) || nextQty <= 0 || tx.qty <= 0) return null;
+
+  const unitOnHand = tx.delta_on_hand / tx.qty;
+  const unitInTransit = tx.delta_in_transit / tx.qty;
+  const unitReserved = tx.delta_reserved / tx.qty;
+  const unitConsumed = tx.delta_consumed / tx.qty;
+  if (!Number.isInteger(unitOnHand) || !Number.isInteger(unitInTransit) || !Number.isInteger(unitReserved) || !Number.isInteger(unitConsumed)) {
+    return null;
+  }
+
+  return {
+    delta_on_hand: unitOnHand * nextQty,
+    delta_in_transit: unitInTransit * nextQty,
+    delta_reserved: unitReserved * nextQty,
+    delta_consumed: unitConsumed * nextQty,
+  };
+}
+
+async function applyInventoryBalanceDelta(
+  db: D1Database,
+  productId: number,
+  deltaOnHand: number,
+  deltaInTransit: number,
+  deltaReserved: number,
+  deltaConsumed: number,
+) {
+  await ensureBalanceRow(db, productId);
+  const run = await db.prepare(
+    `UPDATE inventory_balances
+     SET on_hand_qty = on_hand_qty + ?,
+         in_transit_qty = in_transit_qty + ?,
+         reserved_qty = reserved_qty + ?,
+         consumed_qty = consumed_qty + ?,
+         updated_at = ?
+     WHERE product_id = ?
+       AND (on_hand_qty + ?) >= 0
+       AND (in_transit_qty + ?) >= 0
+       AND (reserved_qty + ?) >= 0
+       AND (consumed_qty + ?) >= 0
+       AND ((on_hand_qty + ?) - (reserved_qty + ?)) >= 0`,
+  )
+    .bind(
+      deltaOnHand,
+      deltaInTransit,
+      deltaReserved,
+      deltaConsumed,
+      now(),
+      productId,
+      deltaOnHand,
+      deltaInTransit,
+      deltaReserved,
+      deltaConsumed,
+      deltaOnHand,
+      deltaReserved,
+    )
+    .run();
+
+  if ((run.meta.changes ?? 0) > 0) return { ok: true as const, message: '' };
+
+  const bal = await db.prepare(
+    `SELECT COALESCE(on_hand_qty, 0) AS on_hand_qty,
+            COALESCE(in_transit_qty, 0) AS in_transit_qty,
+            COALESCE(reserved_qty, 0) AS reserved_qty,
+            COALESCE(consumed_qty, 0) AS consumed_qty
+     FROM inventory_balances
+     WHERE product_id = ?`,
+  )
+    .bind(productId)
+    .first() as { on_hand_qty: number; in_transit_qty: number; reserved_qty: number; consumed_qty: number } | null;
+
+  const onHand = Number(bal?.on_hand_qty || 0);
+  const inTransit = Number(bal?.in_transit_qty || 0);
+  const reserved = Number(bal?.reserved_qty || 0);
+  const consumed = Number(bal?.consumed_qty || 0);
+  const nextOnHand = onHand + deltaOnHand;
+  const nextInTransit = inTransit + deltaInTransit;
+  const nextReserved = reserved + deltaReserved;
+  const nextConsumed = consumed + deltaConsumed;
+  const nextAvailable = nextOnHand - nextReserved;
+  return {
+    ok: false as const,
+    message: `库存约束冲突（目标值：在手=${nextOnHand}，在途=${nextInTransit}，预留=${nextReserved}，已消耗=${nextConsumed}，可用=${nextAvailable}）`,
+  };
 }
 
 async function writeAudit(c: any, action: string, targetType: string, targetId: string, beforeJson: unknown, afterJson: unknown) {
@@ -1521,7 +1828,7 @@ async function ensureBalanceRow(db: D1Database, productId: number) {
 }
 
 async function deleteProjectCascade(c: any, projectId: number, reasonPrefix: string) {
-  const before = await c.env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(projectId).first<{ id: number; project_code: string }>();
+  const before = await c.env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(projectId).first() as { id: number; project_code: string } | null;
   if (!before) return null;
 
   const releaseRows = await c.env.DB.prepare(
@@ -1532,7 +1839,7 @@ async function deleteProjectCascade(c: any, projectId: number, reasonPrefix: str
      HAVING SUM(qty - consumed_qty - released_qty) > 0`,
   )
     .bind(projectId)
-    .all<{ product_id: number; release_qty: number }>();
+    .all() as { results?: Array<{ product_id: number; release_qty: number }> };
 
   for (const row of releaseRows.results || []) {
     const productId = Number(row.product_id);
