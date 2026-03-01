@@ -183,6 +183,11 @@ export function App() {
   const [skuPageSize, setSkuPageSize] = useState<number>(20);
   const [inventoryPageSize, setInventoryPageSize] = useState<number>(20);
   const [projectPageSize, setProjectPageSize] = useState<number>(20);
+  const [inventoryKeywordQuery, setInventoryKeywordQuery] = useState('');
+  const [inventorySkuQuery, setInventorySkuQuery] = useState('');
+  const [inventoryNameQuery, setInventoryNameQuery] = useState('');
+  const [inventorySpecQuery, setInventorySpecQuery] = useState('');
+  const [inventoryCategoryQuery, setInventoryCategoryQuery] = useState<NumInput>('');
 
   const isAdmin = me?.role === 'admin';
   const userRows = useMemo(() => [...users].sort((a, b) => a.id - b.id), [users]);
@@ -203,6 +208,57 @@ export function App() {
     }
     return map;
   }, [categories]);
+  const inventorySkuOptions = useMemo(
+    () => [...new Set(inventoryRows.map((x) => x.sku).filter((x) => !!x))].sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' })),
+    [inventoryRows],
+  );
+  const inventoryNameOptions = useMemo(
+    () => [...new Set(inventoryRows.map((x) => x.name).filter((x) => !!x))].sort((a, b) => a.localeCompare(b, 'zh-CN', { sensitivity: 'base' })),
+    [inventoryRows],
+  );
+  const inventorySpecOptions = useMemo(
+    () => [...new Set(products.map((x) => (x.spec || '').trim()).filter((x) => !!x))].sort((a, b) => a.localeCompare(b, 'zh-CN', { sensitivity: 'base' })),
+    [products],
+  );
+  const inventoryKeywordOptions = useMemo(
+    () => [...new Set([...inventorySkuOptions, ...inventoryNameOptions, ...inventorySpecOptions])].sort((a, b) => a.localeCompare(b, 'zh-CN', { sensitivity: 'base' })),
+    [inventorySkuOptions, inventoryNameOptions, inventorySpecOptions],
+  );
+  const inventoryFilteredRows = useMemo(() => {
+    const keyword = inventoryKeywordQuery.trim().toLowerCase();
+    const skuQuery = inventorySkuQuery.trim().toLowerCase();
+    const nameQuery = inventoryNameQuery.trim().toLowerCase();
+    const specQuery = inventorySpecQuery.trim().toLowerCase();
+    const categoryQueryId = toNum(inventoryCategoryQuery);
+    const categoryScope = Number.isInteger(categoryQueryId) && categoryQueryId > 0 ? new Set(getDescendantCategoryIds(categoryQueryId)) : null;
+
+    return inventoryRows.filter((item) => {
+      const product = productById.get(item.product_id);
+      const categoryId = product?.category_id ?? null;
+      const categoryName = (product?.category_name || (categoryId ? categoryById.get(categoryId)?.name : '') || '').toLowerCase();
+      const spec = (product?.spec || '').toLowerCase();
+      const sku = item.sku.toLowerCase();
+      const name = item.name.toLowerCase();
+      const unit = (product?.unit || item.unit || '').toLowerCase();
+
+      if (categoryScope && (!categoryId || !categoryScope.has(categoryId))) return false;
+      if (skuQuery && !sku.includes(skuQuery)) return false;
+      if (nameQuery && !name.includes(nameQuery)) return false;
+      if (specQuery && !spec.includes(specQuery)) return false;
+      if (keyword && !`${sku} ${name} ${spec} ${unit} ${categoryName}`.includes(keyword)) return false;
+      return true;
+    });
+  }, [
+    inventoryRows,
+    inventoryKeywordQuery,
+    inventorySkuQuery,
+    inventoryNameQuery,
+    inventorySpecQuery,
+    inventoryCategoryQuery,
+    productById,
+    categoryById,
+    categoryChildrenMap,
+  ]);
   const selectedInventoryProduct = selectedInventoryProductId ? productById.get(selectedInventoryProductId) ?? null : null;
   const selectedInventoryBalance = selectedInventoryProductId ? inventoryByProductId.get(selectedInventoryProductId) ?? null : null;
   const selectedProject = selectedProjectId ? projects.find((x) => x.id === selectedProjectId) ?? null : null;
@@ -210,7 +266,7 @@ export function App() {
   const canEditProjectCommits = !!selectedProjectId && (isAdmin || isProjectMember);
 
   const skuPageCount = Math.max(1, Math.ceil(skuRows.length / skuPageSize));
-  const inventoryPageCount = Math.max(1, Math.ceil(inventoryRows.length / inventoryPageSize));
+  const inventoryPageCount = Math.max(1, Math.ceil(inventoryFilteredRows.length / inventoryPageSize));
   const projectPageCount = Math.max(1, Math.ceil(projectRows.length / projectPageSize));
 
   const skuCurrentPage = Math.min(skuPage, skuPageCount);
@@ -222,8 +278,8 @@ export function App() {
     [skuRows, skuCurrentPage, skuPageSize],
   );
   const pagedInventoryRows = useMemo(
-    () => inventoryRows.slice((inventoryCurrentPage - 1) * inventoryPageSize, inventoryCurrentPage * inventoryPageSize),
-    [inventoryRows, inventoryCurrentPage, inventoryPageSize],
+    () => inventoryFilteredRows.slice((inventoryCurrentPage - 1) * inventoryPageSize, inventoryCurrentPage * inventoryPageSize),
+    [inventoryFilteredRows, inventoryCurrentPage, inventoryPageSize],
   );
   const pagedProjectRows = useMemo(
     () => projectRows.slice((projectCurrentPage - 1) * projectPageSize, projectCurrentPage * projectPageSize),
@@ -356,6 +412,14 @@ export function App() {
     } catch (e) {
       setMsg('error', (e as Error).message);
     }
+  }
+
+  function resetInventoryFilters() {
+    setInventoryKeywordQuery('');
+    setInventorySkuQuery('');
+    setInventoryNameQuery('');
+    setInventorySpecQuery('');
+    setInventoryCategoryQuery('');
   }
 
   async function deleteSku(item: Product) {
@@ -526,6 +590,10 @@ export function App() {
   }, [inventoryPage, inventoryPageCount]);
 
   useEffect(() => {
+    setInventoryPage(1);
+  }, [inventoryKeywordQuery, inventorySkuQuery, inventoryNameQuery, inventorySpecQuery, inventoryCategoryQuery]);
+
+  useEffect(() => {
     if (projectPage > projectPageCount) setProjectPage(projectPageCount);
   }, [projectPage, projectPageCount]);
 
@@ -558,6 +626,11 @@ export function App() {
     setReserveForm({ projectId: '', productId: '', qty: '', reason: '' });
     setReleaseForm({ reservationId: '', qty: '', reason: '' });
     setConsumeForm({ reservationId: '', qty: '', note: '' });
+    setInventoryKeywordQuery('');
+    setInventorySkuQuery('');
+    setInventoryNameQuery('');
+    setInventorySpecQuery('');
+    setInventoryCategoryQuery('');
     setSkuEditForm({ id: '', sku: '', name: '', categoryId: '', unit: 'pcs', spec: '', safetyStockQty: 0, status: 'active' });
     setEditCommitForm({ commitId: '', title: '', content: '', statusTo: 'active', progress: 0 });
     setSkuPage(1);
@@ -692,6 +765,72 @@ export function App() {
 
             {!selectedInventoryProductId && (
               <>
+                <div className="filter-panel">
+                  <div className="filter-grid">
+                    <div className="filter-field">
+                      <span className="filter-label">关键词</span>
+                      <input
+                        list="inventory-keyword-options"
+                        placeholder="SKU / 名称 / 型号 / 单位"
+                        value={inventoryKeywordQuery}
+                        onChange={(e) => setInventoryKeywordQuery(e.target.value)}
+                      />
+                      <datalist id="inventory-keyword-options">
+                        {inventoryKeywordOptions.map((item) => <option key={item} value={item} />)}
+                      </datalist>
+                    </div>
+                    <div className="filter-field">
+                      <span className="filter-label">SKU</span>
+                      <input
+                        list="inventory-sku-options"
+                        placeholder="输入或选择SKU"
+                        value={inventorySkuQuery}
+                        onChange={(e) => setInventorySkuQuery(e.target.value)}
+                      />
+                      <datalist id="inventory-sku-options">
+                        {inventorySkuOptions.map((item) => <option key={item} value={item} />)}
+                      </datalist>
+                    </div>
+                    <div className="filter-field">
+                      <span className="filter-label">产品名称</span>
+                      <input
+                        list="inventory-name-options"
+                        placeholder="输入或选择产品名称"
+                        value={inventoryNameQuery}
+                        onChange={(e) => setInventoryNameQuery(e.target.value)}
+                      />
+                      <datalist id="inventory-name-options">
+                        {inventoryNameOptions.map((item) => <option key={item} value={item} />)}
+                      </datalist>
+                    </div>
+                    <div className="filter-field">
+                      <span className="filter-label">型号/规格</span>
+                      <input
+                        list="inventory-spec-options"
+                        placeholder="输入或选择型号/规格"
+                        value={inventorySpecQuery}
+                        onChange={(e) => setInventorySpecQuery(e.target.value)}
+                      />
+                      <datalist id="inventory-spec-options">
+                        {inventorySpecOptions.map((item) => <option key={item} value={item} />)}
+                      </datalist>
+                    </div>
+                    <div className="filter-field">
+                      <span className="filter-label">分类</span>
+                      <select
+                        value={inventoryCategoryQuery}
+                        onChange={(e) => setInventoryCategoryQuery(e.target.value ? Number(e.target.value) : '')}
+                      >
+                        <option value="">全部分类</option>
+                        {categories.map((cat) => <option key={cat.id} value={cat.id}>{cat.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="filter-actions">
+                      <button type="button" className="back-btn" onClick={resetInventoryFilters}>清空筛选</button>
+                      <span className="muted">筛选结果：{inventoryFilteredRows.length} / {inventoryRows.length}</span>
+                    </div>
+                  </div>
+                </div>
                 <div className="table-wrap">
                   <table>
                     <thead><tr><th>SKU</th><th>名称</th><th>总库存</th><th>在途</th><th>在手</th><th>可用</th><th>预留</th><th>已消耗</th></tr></thead>
@@ -702,12 +841,12 @@ export function App() {
                           <td>{item.name}</td><td>{item.total_stock_qty}</td><td>{item.in_transit_qty}</td><td>{item.on_hand_qty}</td><td>{item.available_qty}</td><td>{item.reserved_qty}</td><td>{item.consumed_qty}</td>
                         </tr>
                       ))}
-                      {inventoryRows.length === 0 && <tr><td colSpan={8} className="empty-cell">暂无库存数据</td></tr>}
+                      {inventoryFilteredRows.length === 0 && <tr><td colSpan={8} className="empty-cell">暂无匹配库存数据</td></tr>}
                     </tbody>
                   </table>
                 </div>
                 <Pager
-                  total={inventoryRows.length}
+                  total={inventoryFilteredRows.length}
                   page={inventoryCurrentPage}
                   pageCount={inventoryPageCount}
                   pageSize={inventoryPageSize}

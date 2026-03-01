@@ -234,6 +234,38 @@ button:disabled {
   letter-spacing: 0.02em;
 }
 
+.filter-panel {
+  border: 1px solid rgba(111, 165, 255, 0.24);
+  border-radius: 12px;
+  padding: 10px;
+  margin-bottom: 10px;
+  background: rgba(10, 20, 38, 0.58);
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  align-items: end;
+}
+
+.filter-field {
+  display: grid;
+  gap: 6px;
+}
+
+.filter-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.filter-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .minor-title {
   margin: 0 0 10px;
   color: #d7e7ff;
@@ -531,8 +563,18 @@ th {
     align-items: flex-start;
   }
 
+  .filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .pager {
     flex-direction: column;
     align-items: flex-start;
+  }
+}
+
+@media (max-width: 720px) {
+  .filter-grid {
+    grid-template-columns: 1fr;
   }
 }
