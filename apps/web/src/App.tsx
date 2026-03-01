@@ -90,10 +90,10 @@ function canManualFixInventoryTx(tx: InventoryTransaction) {
 }
 
 function inventoryTxStatusLabel(tx: InventoryTransaction) {
-  if (tx.reverted_by_tx_id) return `已撤销 #${tx.reverted_by_tx_id}`;
-  if (tx.operation_type === 'UNDO') return tx.edited_from_tx_id ? `撤销记录 #${tx.edited_from_tx_id}` : '撤销记录';
-  if (tx.operation_type === 'EDIT_ADJUST') return tx.edited_from_tx_id ? `修正记录 #${tx.edited_from_tx_id}` : '修正记录';
-  if (tx.superseded_by_tx_id) return `已编辑 #${tx.superseded_by_tx_id}`;
+  if (tx.reverted_by_tx_id) return '已撤销';
+  if (tx.operation_type === 'UNDO') return '撤销记录';
+  if (tx.operation_type === 'EDIT_ADJUST') return '修正记录';
+  if (tx.superseded_by_tx_id) return '已编辑';
   return '有效';
 }
 
@@ -698,11 +698,11 @@ export function App() {
                 <h4 className="section-title">库存流水</h4>
                 <div className="table-wrap">
                   <table>
-                    <thead><tr><th>ID</th><th>时间</th><th>类型</th><th>数量</th><th>在手变化</th><th>在途变化</th><th>预留变化</th><th>消耗变化</th><th>关联项目</th><th>备注</th><th>状态</th><th>操作人</th>{isAdmin && <th>操作</th>}</tr></thead>
+                    <thead><tr><th>序号</th><th>时间</th><th>类型</th><th>数量</th><th>在手变化</th><th>在途变化</th><th>预留变化</th><th>消耗变化</th><th>关联项目</th><th>备注</th><th>状态</th><th>操作人</th>{isAdmin && <th>操作</th>}</tr></thead>
                     <tbody>
-                      {inventoryTransactions.map((tx) => (
+                      {inventoryTransactions.map((tx, idx) => (
                         <tr key={tx.id}>
-                          <td>{tx.id}</td>
+                          <td>{idx + 1}</td>
                           <td>{fmtDateTime(tx.created_at)}</td>
                           <td>{operationTypeLabel[tx.operation_type] || tx.operation_type}</td>
                           <td>{tx.qty}</td>
