@@ -1021,7 +1021,6 @@ app.post('/api/inventory/transactions/:id/undo', async (c) => {
 
   const tx = await getInventoryTxById(c.env.DB, txId);
   if (!tx) return apiError(c, 404, 'NOT_FOUND', 'Transaction not found');
-  if (tx.reverted_by_tx_id) return apiError(c, 409, 'TX_ALREADY_REVERTED', 'This transaction has already been reverted');
 
   const fixCheck = validateInventoryTxForManualFix(tx);
   if (fixCheck) return apiError(c, 409, 'TX_NOT_SUPPORTED', fixCheck);
@@ -1036,37 +1035,32 @@ app.post('/api/inventory/transactions/:id/undo', async (c) => {
   );
   if (!applyRes.ok) return apiError(c, 409, 'INVALID_REVERT', applyRes.message);
 
-  const undoReason =
-    body.data.reason?.trim() ||
-    `撤销流水 #${tx.id}${tx.reason ? `（原备注：${tx.reason}）` : ''}`;
-  const undoTxId = await insertInventoryTx(c, {
-    product_id: tx.product_id,
-    operation_type: 'UNDO',
-    qty: tx.qty,
-    delta_on_hand: -tx.delta_on_hand,
-    delta_in_transit: -tx.delta_in_transit,
-    delta_reserved: -tx.delta_reserved,
-    delta_consumed: -tx.delta_consumed,
-    project_id: null,
-    reservation_id: null,
-    reason: undoReason,
-    idempotency_key: `inventory-tx-undo-${tx.id}-${crypto.randomUUID()}`,
-    edited_from_tx_id: tx.id,
-  });
+  const linkedAdjustRows = await c.env.DB.prepare(
+    'SELECT id FROM inventory_transactions WHERE edited_from_tx_id = ? AND operation_type = ?',
+  )
+    .bind(tx.id, 'EDIT_ADJUST')
+    .all() as { results?: Array<{ id: number }> };
+  const linkedAdjustIds = (linkedAdjustRows.results || []).map((x) => Number(x.id)).filter((x) => Number.isInteger(x) && x > 0);
 
-  await c.env.DB.prepare('UPDATE inventory_transactions SET reverted_by_tx_id = ? WHERE id = ?')
-    .bind(undoTxId, tx.id)
+  for (const linkedId of linkedAdjustIds) {
+    await c.env.DB.prepare('DELETE FROM inventory_transactions WHERE id = ?').bind(linkedId).run();
+  }
+  await c.env.DB.prepare('DELETE FROM inventory_transactions WHERE id = ?')
+    .bind(tx.id)
     .run();
+
   await writeAudit(c, 'inventory_tx.undo', 'inventory_transaction', String(tx.id), tx, {
-    undo_tx_id: undoTxId,
-    reason: undoReason,
+    mode: 'hard_delete_and_rollback',
+    reason: body.data.reason?.trim() || null,
+    deleted_adjust_tx_ids: linkedAdjustIds,
   });
 
   return c.json({
     success: true,
     data: {
       transaction_id: tx.id,
-      undo_tx_id: undoTxId,
+      deleted: true,
+      deleted_adjust_tx_ids: linkedAdjustIds,
       inventory: await getInventoryByProduct(c.env.DB, tx.product_id),
     },
   });
@@ -1717,7 +1711,7 @@ async function getInventoryTxById(db: D1Database, txId: number) {
 function validateInventoryTxForManualFix(tx: InventoryTxRow) {
   if (!inventoryManualFixTypes.has(tx.operation_type)) return '该类型流水暂不支持编辑/撤销';
   if (tx.project_id || tx.reservation_id) return '关联项目预留/消耗的流水暂不支持编辑/撤销';
-  if (tx.edited_from_tx_id) return '系统生成的修正/撤销流水不可再次编辑/撤销';
+  if (tx.edited_from_tx_id) return '系统生成的修正流水不可再次编辑/撤销';
   return null;
 }
 

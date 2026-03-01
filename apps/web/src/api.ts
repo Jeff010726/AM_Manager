@@ -41,9 +41,23 @@ export class ApiClient {
       headers,
     });
 
-    const json = (await res.json()) as ApiEnvelope<T>;
-    if (!res.ok || !json.success) {
-      throw new Error(json.message || json.error_code || `HTTP ${res.status}`);
+    const raw = await res.text();
+    let json: ApiEnvelope<T> | null = null;
+    if (raw) {
+      try {
+        json = JSON.parse(raw) as ApiEnvelope<T>;
+      } catch {
+        json = null;
+      }
+    }
+
+    if (!res.ok) {
+      const fallback = raw ? `HTTP ${res.status}: ${raw.slice(0, 160)}` : `HTTP ${res.status}`;
+      throw new Error(json?.message || json?.error_code || fallback);
+    }
+
+    if (!json || !json.success) {
+      throw new Error(json?.message || json?.error_code || 'Invalid API response');
     }
     return json.data;
   }

@@ -408,7 +408,7 @@ export function App() {
       return;
     }
 
-    if (!window.confirm(`确认撤销流水 #${item.id} 吗？\n该操作会自动生成一条反向流水。`)) return;
+    if (!window.confirm(`确认撤销流水 #${item.id} 吗？\n该操作会回滚库存并删除该流水记录。`)) return;
     const reasonRaw = window.prompt('撤销备注（可留空）', '');
     if (reasonRaw === null) return;
     const payload = reasonRaw.trim() ? { reason: reasonRaw.trim() } : undefined;
