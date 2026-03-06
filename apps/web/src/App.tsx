@@ -833,15 +833,26 @@ export function App() {
                 </div>
                 <div className="table-wrap">
                   <table>
-                    <thead><tr><th>SKU</th><th>名称</th><th>总库存</th><th>在途</th><th>在手</th><th>可用</th><th>预留</th><th>已消耗</th></tr></thead>
+                    <thead><tr><th>SKU</th><th>名称</th><th>分类</th><th>型号/规格</th><th>总库存</th><th>在途</th><th>在手</th><th>可用</th><th>预留</th><th>已消耗</th></tr></thead>
                     <tbody>
-                      {pagedInventoryRows.map((item) => (
-                        <tr key={item.product_id}>
-                          <td><button className="link-btn" onClick={() => void loadInventoryDetail(item.product_id)}>{item.sku}</button></td>
-                          <td>{item.name}</td><td>{item.total_stock_qty}</td><td>{item.in_transit_qty}</td><td>{item.on_hand_qty}</td><td>{item.available_qty}</td><td>{item.reserved_qty}</td><td>{item.consumed_qty}</td>
-                        </tr>
-                      ))}
-                      {inventoryFilteredRows.length === 0 && <tr><td colSpan={8} className="empty-cell">暂无匹配库存数据</td></tr>}
+                      {pagedInventoryRows.map((item) => {
+                        const productMeta = productById.get(item.product_id);
+                        return (
+                          <tr key={item.product_id}>
+                            <td><button className="link-btn" onClick={() => void loadInventoryDetail(item.product_id)}>{item.sku}</button></td>
+                            <td>{item.name}</td>
+                            <td>{productMeta?.category_name || '-'}</td>
+                            <td>{productMeta?.spec || '-'}</td>
+                            <td>{item.total_stock_qty}</td>
+                            <td>{item.in_transit_qty}</td>
+                            <td>{item.on_hand_qty}</td>
+                            <td>{item.available_qty}</td>
+                            <td>{item.reserved_qty}</td>
+                            <td>{item.consumed_qty}</td>
+                          </tr>
+                        );
+                      })}
+                      {inventoryFilteredRows.length === 0 && <tr><td colSpan={10} className="empty-cell">暂无匹配库存数据</td></tr>}
                     </tbody>
                   </table>
                 </div>
