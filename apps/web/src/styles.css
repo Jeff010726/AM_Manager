@@ -507,6 +507,10 @@ th {
   min-height: 0;
 }
 
+.modal-card.modal-wide {
+  width: min(1120px, calc(100vw - 32px));
+}
+
 .modal-head {
   display: flex;
   justify-content: space-between;
@@ -526,6 +530,15 @@ th {
 
 .modal-card .table-wrap {
   max-height: min(52vh, 520px);
+}
+
+.modal-card.modal-wide .table-wrap {
+  overflow-x: hidden;
+}
+
+.modal-card.modal-wide th,
+.modal-card.modal-wide td {
+  white-space: normal;
 }
 
 .toast-wrap {

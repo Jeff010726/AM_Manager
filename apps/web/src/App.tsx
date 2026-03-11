@@ -1785,7 +1785,7 @@ export function App() {
         </form>
       </Modal>
 
-      <Modal open={modal === 'finishedProductBom'} title="批量关联BOM物料" onClose={closeFinishedProductBomModal}>
+      <Modal open={modal === 'finishedProductBom'} title="批量关联BOM物料" onClose={closeFinishedProductBomModal} className="modal-wide">
         <form className="form" onSubmit={(e) => {
           e.preventDefault();
           if (!selectedFinishedProductId) return setMsg('error', '请先进入产品详情');
@@ -2058,12 +2058,12 @@ function InventoryActionForm(props: {
   );
 }
 
-function Modal(props: { open: boolean; title: string; onClose: () => void; children: ReactNode }) {
-  const { open, title, onClose, children } = props;
+function Modal(props: { open: boolean; title: string; onClose: () => void; children: ReactNode; className?: string }) {
+  const { open, title, onClose, children, className } = props;
   if (!open) return null;
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+      <div className={`modal-card${className ? ` ${className}` : ''}`} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h4>{title}</h4>
           <button className="close-btn" onClick={onClose}>关闭</button>
