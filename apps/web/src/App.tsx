@@ -21,6 +21,7 @@ const DEFAULT_SKU_PAGE_SIZE = 15;
 const DEFAULT_CATEGORY_PAGE_SIZE = 10;
 const DEFAULT_INVENTORY_PAGE_SIZE = 25;
 const TABLE_ROW_HEIGHT_FALLBACK = 36;
+const TABLE_PAGE_SIZE_BUFFER = 6;
 
 type ModalType =
   | null
@@ -107,30 +108,60 @@ function measureAutoPageSize(container: HTMLDivElement | null, fallback: number)
 
   const headerRow = container.querySelector('thead tr');
   const bodyRows = Array.from(container.querySelectorAll('tbody tr'));
-  const sampleRow =
-    bodyRows.find((row) =>
-      Array.from(row.querySelectorAll('td')).some((cell) => !cell.classList.contains('empty-cell')),
-    ) || null;
+  const renderedDataRows = bodyRows.filter((row) =>
+    Array.from(row.querySelectorAll('td')).some((cell) => !cell.classList.contains('empty-cell')),
+  );
+  const sampleRow = renderedDataRows[0] || null;
 
-  const headerHeight = headerRow?.getBoundingClientRect().height ?? 0;
-  const rowHeight = sampleRow?.getBoundingClientRect().height ?? TABLE_ROW_HEIGHT_FALLBACK;
-  const availableHeight = container.clientHeight - headerHeight;
+  const headerHeight = Math.ceil(headerRow?.getBoundingClientRect().height ?? 0);
+  const rowHeight = Math.ceil(sampleRow?.getBoundingClientRect().height ?? TABLE_ROW_HEIGHT_FALLBACK);
+  const availableHeight = container.clientHeight - headerHeight - TABLE_PAGE_SIZE_BUFFER;
   if (availableHeight <= 0 || rowHeight <= 0) return fallback;
 
   return Math.max(1, Math.floor(availableHeight / rowHeight));
 }
 
+function measureSettledAutoPageSize(container: HTMLDivElement | null, fallback: number) {
+  const estimated = measureAutoPageSize(container, fallback);
+  if (!container) return estimated;
+
+  const hasVerticalOverflow = container.scrollHeight - container.clientHeight > 1;
+  if (!hasVerticalOverflow) return estimated;
+
+  const dataRows = Array.from(container.querySelectorAll('tbody tr')).filter((row) =>
+    Array.from(row.querySelectorAll('td')).some((cell) => !cell.classList.contains('empty-cell')),
+  );
+  if (dataRows.length <= 1) return 1;
+
+  return Math.max(1, Math.min(estimated, dataRows.length - 1));
+}
+
 function useAutoPageSize(fallback: number, deps: readonly unknown[]) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [pageSize, setPageSize] = useState(fallback);
+  const pageSizeRef = useRef(fallback);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
+    let frameId = 0;
     const syncPageSize = () => {
       const next = measureAutoPageSize(container, fallback);
-      setPageSize((prev) => (prev === next ? prev : next));
+      if (pageSizeRef.current !== next) {
+        pageSizeRef.current = next;
+        setPageSize(next);
+      }
+
+      if (frameId) window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(() => {
+        frameId = 0;
+        const settled = measureSettledAutoPageSize(container, fallback);
+        if (pageSizeRef.current !== settled) {
+          pageSizeRef.current = settled;
+          setPageSize(settled);
+        }
+      });
     };
 
     syncPageSize();
@@ -140,6 +171,7 @@ function useAutoPageSize(fallback: number, deps: readonly unknown[]) {
 
     window.addEventListener('resize', syncPageSize);
     return () => {
+      if (frameId) window.cancelAnimationFrame(frameId);
       window.removeEventListener('resize', syncPageSize);
       resizeObserver?.disconnect();
     };
