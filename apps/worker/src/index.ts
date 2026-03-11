@@ -689,6 +689,67 @@ app.get('/api/finished-products/:id/bom', async (c) => {
   return c.json({ success: true, data: await getFinishedProductBom(c.env.DB, finishedProductId) });
 });
 
+app.post('/api/finished-products/:id/bom/batch', async (c) => {
+  const guard = requireAdmin(c);
+  if (guard) return guard;
+
+  const finishedProductId = Number(c.req.param('id'));
+  if (!(await existsById(c.env.DB, 'finished_products', finishedProductId))) {
+    return apiError(c, 404, 'NOT_FOUND', 'Finished product not found');
+  }
+
+  const schema = z.object({
+    items: z.array(z.object({
+      material_product_id: z.number().int().positive(),
+      qty_per_set: z.number().int().positive(),
+      note: z.string().optional().nullable(),
+    })).min(1),
+  });
+  const body = schema.safeParse(await c.req.json().catch(() => ({})));
+  if (!body.success) return apiError(c, 400, 'INVALID_PARAMS', body.error.issues[0]?.message || 'Invalid payload');
+
+  const materialIds = body.data.items.map((x) => x.material_product_id);
+  const uniqueIds = new Set(materialIds);
+  if (uniqueIds.size !== materialIds.length) {
+    return apiError(c, 409, 'BOM_MATERIAL_DUPLICATED', 'Duplicate material found in batch payload');
+  }
+
+  const existingRows = await c.env.DB.prepare(
+    `SELECT material_product_id
+     FROM finished_product_bom_items
+     WHERE finished_product_id = ?`,
+  )
+    .bind(finishedProductId)
+    .all<{ material_product_id: number }>();
+  const existingMaterialIds = new Set((existingRows.results || []).map((x) => Number(x.material_product_id)));
+
+  for (const item of body.data.items) {
+    if (existingMaterialIds.has(item.material_product_id)) {
+      return apiError(c, 409, 'BOM_MATERIAL_EXISTS', `Material ${item.material_product_id} is already linked`);
+    }
+    if (!(await existsById(c.env.DB, 'products', item.material_product_id))) {
+      return apiError(c, 404, 'NOT_FOUND', `Material SKU ${item.material_product_id} not found`);
+    }
+  }
+
+  const insertedIds: number[] = [];
+  for (const item of body.data.items) {
+    const run = await c.env.DB.prepare(
+      `INSERT INTO finished_product_bom_items (finished_product_id, material_product_id, qty_per_set, note, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(finishedProductId, item.material_product_id, item.qty_per_set, item.note ?? null, now(), now())
+      .run();
+    insertedIds.push(Number(run.meta.last_row_id));
+  }
+
+  await writeAudit(c, 'finished_product_bom.batch_create', 'finished_product', String(finishedProductId), null, {
+    count: body.data.items.length,
+    items: body.data.items,
+  });
+  return c.json({ success: true, data: { count: insertedIds.length, ids: insertedIds } }, 201);
+});
+
 app.post('/api/finished-products/:id/bom', async (c) => {
   const guard = requireAdmin(c);
   if (guard) return guard;

@@ -214,6 +214,16 @@ export class ApiClient {
     });
   }
 
+  createFinishedProductBomItemsBatch(
+    finishedProductId: number,
+    payload: { items: Array<{ material_product_id: number; qty_per_set: number; note?: string }> },
+  ) {
+    return this.request<{ count: number; ids: number[] }>(`/api/finished-products/${finishedProductId}/bom/batch`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   updateFinishedProductBomItem(
     finishedProductId: number,
     bomItemId: number,

@@ -242,9 +242,8 @@ export function App() {
     status: 'active' as 'active' | 'inactive',
   });
   const [finishedProductBomForm, setFinishedProductBomForm] = useState({
-    materialProductId: '' as NumInput,
-    qtyPerSet: 1 as NumInput,
-    note: '',
+    query: '',
+    selected: {} as Record<number, number>,
   });
   const [finishedProductBomEditForm, setFinishedProductBomEditForm] = useState({
     itemId: '' as NumInput,
@@ -389,6 +388,20 @@ export function App() {
   const selectedInventoryProduct = selectedInventoryProductId ? productById.get(selectedInventoryProductId) ?? null : null;
   const selectedInventoryBalance = selectedInventoryProductId ? inventoryByProductId.get(selectedInventoryProductId) ?? null : null;
   const selectedFinishedProduct = selectedFinishedProductId ? finishedProducts.find((x) => x.id === selectedFinishedProductId) ?? null : null;
+  const linkedFinishedProductMaterialIds = useMemo(
+    () => new Set(finishedProductBomItems.map((x) => x.material_product_id)),
+    [finishedProductBomItems],
+  );
+  const finishedProductBomCandidateRows = useMemo(() => {
+    const query = finishedProductBomForm.query.trim().toLowerCase();
+    return products.filter((item) => {
+      if (selectedFinishedProduct?.sku_product_id === item.id) return false;
+      if (linkedFinishedProductMaterialIds.has(item.id)) return false;
+      if (!query) return true;
+      const haystack = `${item.sku} ${item.name} ${item.spec || ''} ${item.category_name || ''} ${item.unit}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [products, selectedFinishedProduct, linkedFinishedProductMaterialIds, finishedProductBomForm.query]);
   const selectedProject = selectedProjectId ? projects.find((x) => x.id === selectedProjectId) ?? null : null;
   const isProjectMember = !!me && members.some((m) => m.user_id === me.id);
   const canEditProjectCommits = !!selectedProjectId && (isAdmin || isProjectMember);
@@ -729,6 +742,34 @@ export function App() {
     }, 'BOM物料删除成功', false);
   }
 
+  function closeFinishedProductBomModal() {
+    setModal(null);
+    setFinishedProductBomForm({ query: '', selected: {} });
+  }
+
+  function toggleFinishedProductBomSelection(productId: number, checked: boolean) {
+    setFinishedProductBomForm((prev) => {
+      const nextSelected = { ...prev.selected };
+      if (checked) nextSelected[productId] = nextSelected[productId] || 1;
+      else delete nextSelected[productId];
+      return { ...prev, selected: nextSelected };
+    });
+  }
+
+  function updateFinishedProductBomSelectionQty(productId: number, qty: NumInput) {
+    const nextQty = toNum(qty);
+    setFinishedProductBomForm((prev) => {
+      if (!(productId in prev.selected)) return prev;
+      return {
+        ...prev,
+        selected: {
+          ...prev.selected,
+          [productId]: nextQty,
+        },
+      };
+    });
+  }
+
   async function editInventoryTx(item: InventoryTransaction) {
     if (!canManualFixInventoryTx(item)) {
       setMsg('error', '该流水暂不支持编辑（仅支持入库/出库/在途类/库存调整，且不能关联项目预留记录）');
@@ -888,7 +929,7 @@ export function App() {
     setInventoryCategoryQuery('');
     setFinishedProductForm({ skuProductId: '', productName: '', note: '', status: 'active' });
     setFinishedProductEditForm({ id: '', skuProductId: '', productName: '', note: '', status: 'active' });
-    setFinishedProductBomForm({ materialProductId: '', qtyPerSet: 1, note: '' });
+    setFinishedProductBomForm({ query: '', selected: {} });
     setFinishedProductBomEditForm({ itemId: '', materialProductId: '', qtyPerSet: 1, note: '' });
     setFinishedProductStockForm({ sets: '', note: '' });
     setFinishedProductProduceForm({ sets: '', note: '' });
@@ -1744,28 +1785,69 @@ export function App() {
         </form>
       </Modal>
 
-      <Modal open={modal === 'finishedProductBom'} title="关联BOM物料" onClose={() => setModal(null)}>
+      <Modal open={modal === 'finishedProductBom'} title="批量关联BOM物料" onClose={closeFinishedProductBomModal}>
         <form className="form" onSubmit={(e) => {
           e.preventDefault();
           if (!selectedFinishedProductId) return setMsg('error', '请先进入产品详情');
-          if (!isPositive(finishedProductBomForm.materialProductId) || !isPositive(finishedProductBomForm.qtyPerSet)) return setMsg('error', '请选择物料并填写单套用量');
+          const items = Object.entries(finishedProductBomForm.selected)
+            .map(([productId, qtyPerSet]) => ({
+              material_product_id: Number(productId),
+              qty_per_set: Number(qtyPerSet),
+            }))
+            .filter((item) => Number.isInteger(item.material_product_id) && item.material_product_id > 0);
+          if (items.length === 0) return setMsg('error', '请先勾选至少一个物料');
+          if (items.some((item) => !Number.isInteger(item.qty_per_set) || item.qty_per_set <= 0)) {
+            return setMsg('error', '所有已勾选物料都必须填写正整数单套用量');
+          }
           void runAction(async () => {
-            await apiClient.createFinishedProductBomItem(selectedFinishedProductId, {
-              material_product_id: toNum(finishedProductBomForm.materialProductId),
-              qty_per_set: toNum(finishedProductBomForm.qtyPerSet),
-              note: finishedProductBomForm.note.trim(),
-            });
-            setFinishedProductBomForm({ materialProductId: '', qtyPerSet: 1, note: '' });
+            await apiClient.createFinishedProductBomItemsBatch(selectedFinishedProductId, { items });
+            setFinishedProductBomForm({ query: '', selected: {} });
             await loadBase();
             await loadFinishedProductDetail(selectedFinishedProductId);
-          }, 'BOM物料添加成功');
+          }, `已批量关联 ${items.length} 个物料`);
         }}>
-          <select value={finishedProductBomForm.materialProductId} onChange={(e) => setFinishedProductBomForm({ ...finishedProductBomForm, materialProductId: e.target.value ? Number(e.target.value) : '' })}>
-            <option value="">选择物料SKU</option>
-            {products.map((p) => <option key={p.id} value={p.id}>{p.sku} / {p.name}</option>)}
-          </select>
-          <input type="number" min={1} placeholder="单套用量" value={finishedProductBomForm.qtyPerSet} onChange={(e) => setFinishedProductBomForm({ ...finishedProductBomForm, qtyPerSet: e.target.value ? Number(e.target.value) : '' })} />
-          <input placeholder="备注" value={finishedProductBomForm.note} onChange={(e) => setFinishedProductBomForm({ ...finishedProductBomForm, note: e.target.value })} />
+          <p className="subtle">检索 SKU / 名称后勾选物料，并为每个勾选项填写单套用量，再一次性提交。</p>
+          <input
+            placeholder="检索 SKU / 名称 / 型号 / 分类"
+            value={finishedProductBomForm.query}
+            onChange={(e) => setFinishedProductBomForm((prev) => ({ ...prev, query: e.target.value }))}
+          />
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>选择</th><th>物料SKU</th><th>物料名称</th><th>分类</th><th>型号/规格</th><th>单位</th><th>单套用量</th></tr></thead>
+              <tbody>
+                {finishedProductBomCandidateRows.map((item) => {
+                  const checked = item.id in finishedProductBomForm.selected;
+                  return (
+                    <tr key={item.id}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => toggleFinishedProductBomSelection(item.id, e.target.checked)}
+                        />
+                      </td>
+                      <td>{item.sku}</td>
+                      <td>{item.name}</td>
+                      <td>{item.category_name}</td>
+                      <td>{item.spec || '-'}</td>
+                      <td>{item.unit}</td>
+                      <td>
+                        <input
+                          type="number"
+                          min={1}
+                          value={checked ? finishedProductBomForm.selected[item.id] : 1}
+                          disabled={!checked}
+                          onChange={(e) => updateFinishedProductBomSelectionQty(item.id, e.target.value ? Number(e.target.value) : '')}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+                {finishedProductBomCandidateRows.length === 0 && <tr><td colSpan={7} className="empty-cell">暂无可关联物料</td></tr>}
+              </tbody>
+            </table>
+          </div>
           <button type="submit">提交</button>
         </form>
       </Modal>
