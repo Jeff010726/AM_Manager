@@ -1,5 +1,5 @@
 ﻿
-import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from './api';
 import type {
   Category,
@@ -140,39 +140,23 @@ function useAutoPageSize(fallback: number, deps: readonly unknown[]) {
   const [pageSize, setPageSize] = useState(fallback);
   const pageSizeRef = useRef(fallback);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    let frameId = 0;
     const syncPageSize = () => {
-      const next = measureStableAutoPageSize(container, fallback, pageSizeRef.current);
+      const next = measureStableAutoPageSize(containerRef.current, fallback, pageSizeRef.current);
       if (pageSizeRef.current !== next) {
         pageSizeRef.current = next;
         setPageSize(next);
       }
-
-      if (frameId) window.cancelAnimationFrame(frameId);
-      frameId = window.requestAnimationFrame(() => {
-        frameId = 0;
-        const settled = measureStableAutoPageSize(container, fallback, pageSizeRef.current);
-        if (pageSizeRef.current !== settled) {
-          pageSizeRef.current = settled;
-          setPageSize(settled);
-        }
-      });
     };
 
     syncPageSize();
 
-    const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(syncPageSize) : null;
-    resizeObserver?.observe(container);
-
     window.addEventListener('resize', syncPageSize);
     return () => {
-      if (frameId) window.cancelAnimationFrame(frameId);
       window.removeEventListener('resize', syncPageSize);
-      resizeObserver?.disconnect();
     };
   }, [fallback, ...deps]);
 
