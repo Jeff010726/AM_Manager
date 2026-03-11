@@ -140,6 +140,37 @@ export type InventoryTransaction = {
   edited_from_tx_id?: number | null;
 };
 
+export type FinishedProduct = {
+  id: number;
+  sku_product_id: number;
+  product_name: string;
+  note?: string | null;
+  status: 'active' | 'inactive';
+  created_at: string;
+  updated_at: string;
+  bound_sku: string;
+  bound_sku_name: string;
+  bound_unit: string;
+  bound_spec?: string | null;
+  bound_category_name?: string | null;
+  bom_item_count: number;
+};
+
+export type FinishedProductBomItem = {
+  id: number;
+  finished_product_id: number;
+  material_product_id: number;
+  material_sku: string;
+  material_name: string;
+  material_unit: string;
+  material_spec?: string | null;
+  material_category_name?: string | null;
+  qty_per_set: number;
+  note?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
 export type ApiEnvelope<T> = {
   success: boolean;
   data: T;

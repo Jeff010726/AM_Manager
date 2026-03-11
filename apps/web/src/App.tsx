@@ -3,6 +3,8 @@ import { FormEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useS
 import { apiClient } from './api';
 import type {
   Category,
+  FinishedProduct,
+  FinishedProductBomItem,
   InventoryItem,
   InventoryTransaction,
   Product,
@@ -13,13 +15,15 @@ import type {
   User,
 } from './types';
 
-type Tab = 'sku' | 'inventory' | 'projects' | 'users';
+type Tab = 'sku' | 'inventory' | 'finishedProducts' | 'projects' | 'users';
 type NumInput = '' | number;
 type Toast = { id: number; type: 'ok' | 'error'; text: string };
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
 const DEFAULT_SKU_PAGE_SIZE = 15;
 const DEFAULT_CATEGORY_PAGE_SIZE = 10;
 const DEFAULT_INVENTORY_PAGE_SIZE = 25;
+const DEFAULT_FINISHED_PRODUCT_PAGE_SIZE = 15;
+const DEFAULT_FINISHED_PRODUCT_BOM_PAGE_SIZE = 12;
 const TABLE_ROW_HEIGHT_FALLBACK = 36;
 const TABLE_PAGE_SIZE_BUFFER = 6;
 
@@ -35,6 +39,12 @@ type ModalType =
   | 'reserve'
   | 'release'
   | 'consume'
+  | 'finishedProduct'
+  | 'finishedProductEdit'
+  | 'finishedProductBom'
+  | 'finishedProductBomEdit'
+  | 'finishedProductStock'
+  | 'finishedProductProduce'
   | 'project'
   | 'member'
   | 'commit'
@@ -183,6 +193,11 @@ export function App() {
   const [inventoryDetailLoading, setInventoryDetailLoading] = useState(false);
   const [inventoryTransactions, setInventoryTransactions] = useState<InventoryTransaction[]>([]);
 
+  const [finishedProducts, setFinishedProducts] = useState<FinishedProduct[]>([]);
+  const [selectedFinishedProductId, setSelectedFinishedProductId] = useState<number | null>(null);
+  const [finishedProductDetailLoading, setFinishedProductDetailLoading] = useState(false);
+  const [finishedProductBomItems, setFinishedProductBomItems] = useState<FinishedProductBomItem[]>([]);
+
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
   const [projectDetailLoading, setProjectDetailLoading] = useState(false);
   const [members, setMembers] = useState<ProjectMember[]>([]);
@@ -213,6 +228,32 @@ export function App() {
     safetyStockQty: 0 as NumInput,
     status: 'active' as 'active' | 'inactive',
   });
+  const [finishedProductForm, setFinishedProductForm] = useState({
+    skuProductId: '' as NumInput,
+    productName: '',
+    note: '',
+    status: 'active' as 'active' | 'inactive',
+  });
+  const [finishedProductEditForm, setFinishedProductEditForm] = useState({
+    id: '' as NumInput,
+    skuProductId: '' as NumInput,
+    productName: '',
+    note: '',
+    status: 'active' as 'active' | 'inactive',
+  });
+  const [finishedProductBomForm, setFinishedProductBomForm] = useState({
+    materialProductId: '' as NumInput,
+    qtyPerSet: 1 as NumInput,
+    note: '',
+  });
+  const [finishedProductBomEditForm, setFinishedProductBomEditForm] = useState({
+    itemId: '' as NumInput,
+    materialProductId: '' as NumInput,
+    qtyPerSet: 1 as NumInput,
+    note: '',
+  });
+  const [finishedProductStockForm, setFinishedProductStockForm] = useState({ sets: '' as NumInput, note: '' });
+  const [finishedProductProduceForm, setFinishedProductProduceForm] = useState({ sets: '' as NumInput, note: '' });
   const [projectForm, setProjectForm] = useState({ code: '', name: '', ownerId: '' as NumInput, note: '' });
   const [memberForm, setMemberForm] = useState({ userId: '' as NumInput, projectRole: '成员' });
   const [commitForm, setCommitForm] = useState({
@@ -245,6 +286,8 @@ export function App() {
   const [skuPage, setSkuPage] = useState(1);
   const [categoryPage, setCategoryPage] = useState(1);
   const [inventoryPage, setInventoryPage] = useState(1);
+  const [finishedProductPage, setFinishedProductPage] = useState(1);
+  const [finishedProductBomPage, setFinishedProductBomPage] = useState(1);
   const [projectPage, setProjectPage] = useState(1);
   const [projectPageSize, setProjectPageSize] = useState<number>(20);
   const [inventoryKeywordQuery, setInventoryKeywordQuery] = useState('');
@@ -256,9 +299,14 @@ export function App() {
   const isAdmin = me?.role === 'admin';
   const [skuTableRef, skuPageSize] = useAutoPageSize(DEFAULT_SKU_PAGE_SIZE, [tab, isAdmin, products.length]);
   const [categoryTableRef, categoryPageSize] = useAutoPageSize(DEFAULT_CATEGORY_PAGE_SIZE, [tab, isAdmin, categories.length]);
+  const [finishedProductTableRef, finishedProductPageSize] = useAutoPageSize(DEFAULT_FINISHED_PRODUCT_PAGE_SIZE, [tab, finishedProducts.length]);
   const userRows = useMemo(() => [...users].sort((a, b) => a.id - b.id), [users]);
   const skuRows = useMemo(() => [...products].sort((a, b) => a.sku.localeCompare(b.sku, 'en', { sensitivity: 'base' })), [products]);
   const inventoryRows = useMemo(() => [...inventory].sort((a, b) => a.sku.localeCompare(b.sku, 'en', { sensitivity: 'base' })), [inventory]);
+  const finishedProductRows = useMemo(
+    () => [...finishedProducts].sort((a, b) => a.bound_sku.localeCompare(b.bound_sku, 'en', { sensitivity: 'base' })),
+    [finishedProducts],
+  );
   const projectRows = useMemo(() => [...projects], [projects]);
 
   const productById = useMemo(() => new Map(products.map((x) => [x.id, x])), [products]);
@@ -334,8 +382,13 @@ export function App() {
     inventorySpecQuery,
     inventoryCategoryQuery,
   ]);
+  const [finishedProductBomTableRef, finishedProductBomPageSize] = useAutoPageSize(
+    DEFAULT_FINISHED_PRODUCT_BOM_PAGE_SIZE,
+    [tab, selectedFinishedProductId, finishedProductBomItems.length],
+  );
   const selectedInventoryProduct = selectedInventoryProductId ? productById.get(selectedInventoryProductId) ?? null : null;
   const selectedInventoryBalance = selectedInventoryProductId ? inventoryByProductId.get(selectedInventoryProductId) ?? null : null;
+  const selectedFinishedProduct = selectedFinishedProductId ? finishedProducts.find((x) => x.id === selectedFinishedProductId) ?? null : null;
   const selectedProject = selectedProjectId ? projects.find((x) => x.id === selectedProjectId) ?? null : null;
   const isProjectMember = !!me && members.some((m) => m.user_id === me.id);
   const canEditProjectCommits = !!selectedProjectId && (isAdmin || isProjectMember);
@@ -343,11 +396,15 @@ export function App() {
   const skuPageCount = Math.max(1, Math.ceil(skuRows.length / skuPageSize));
   const categoryPageCount = Math.max(1, Math.ceil(categories.length / categoryPageSize));
   const inventoryPageCount = Math.max(1, Math.ceil(inventoryFilteredRows.length / inventoryPageSize));
+  const finishedProductPageCount = Math.max(1, Math.ceil(finishedProductRows.length / finishedProductPageSize));
+  const finishedProductBomPageCount = Math.max(1, Math.ceil(finishedProductBomItems.length / finishedProductBomPageSize));
   const projectPageCount = Math.max(1, Math.ceil(projectRows.length / projectPageSize));
 
   const skuCurrentPage = Math.min(skuPage, skuPageCount);
   const categoryCurrentPage = Math.min(categoryPage, categoryPageCount);
   const inventoryCurrentPage = Math.min(inventoryPage, inventoryPageCount);
+  const finishedProductCurrentPage = Math.min(finishedProductPage, finishedProductPageCount);
+  const finishedProductBomCurrentPage = Math.min(finishedProductBomPage, finishedProductBomPageCount);
   const projectCurrentPage = Math.min(projectPage, projectPageCount);
 
   const pagedSkuRows = useMemo(
@@ -361,6 +418,22 @@ export function App() {
   const pagedInventoryRows = useMemo(
     () => inventoryFilteredRows.slice((inventoryCurrentPage - 1) * inventoryPageSize, inventoryCurrentPage * inventoryPageSize),
     [inventoryFilteredRows, inventoryCurrentPage, inventoryPageSize],
+  );
+  const pagedFinishedProductRows = useMemo(
+    () =>
+      finishedProductRows.slice(
+        (finishedProductCurrentPage - 1) * finishedProductPageSize,
+        finishedProductCurrentPage * finishedProductPageSize,
+      ),
+    [finishedProductRows, finishedProductCurrentPage, finishedProductPageSize],
+  );
+  const pagedFinishedProductBomItems = useMemo(
+    () =>
+      finishedProductBomItems.slice(
+        (finishedProductBomCurrentPage - 1) * finishedProductBomPageSize,
+        finishedProductBomCurrentPage * finishedProductBomPageSize,
+      ),
+    [finishedProductBomItems, finishedProductBomCurrentPage, finishedProductBomPageSize],
   );
   const pagedProjectRows = useMemo(
     () => projectRows.slice((projectCurrentPage - 1) * projectPageSize, projectCurrentPage * projectPageSize),
@@ -409,10 +482,11 @@ export function App() {
   async function loadBase() {
     setLoading(true);
     try {
-      const [meData, categoryData, productData, projectData, inventoryData] = await Promise.all([
+      const [meData, categoryData, productData, finishedProductData, projectData, inventoryData] = await Promise.all([
         apiClient.me(),
         apiClient.listCategories(),
         apiClient.listProducts(),
+        apiClient.listFinishedProducts(),
         apiClient.listProjects(),
         apiClient.listInventorySummary(),
       ]);
@@ -420,6 +494,7 @@ export function App() {
       setMe(meData);
       setCategories(categoryData);
       setProducts(productData);
+      setFinishedProducts(finishedProductData);
       setProjects(projectData);
       setInventory(inventoryData);
       if (meData.role === 'admin') setUsers(await apiClient.listUsers());
@@ -428,6 +503,10 @@ export function App() {
       if (selectedInventoryProductId && !inventoryData.some((x) => x.product_id === selectedInventoryProductId)) {
         setSelectedInventoryProductId(null);
         setInventoryTransactions([]);
+      }
+      if (selectedFinishedProductId && !finishedProductData.some((x) => x.id === selectedFinishedProductId)) {
+        setSelectedFinishedProductId(null);
+        setFinishedProductBomItems([]);
       }
       if (selectedProjectId && !projectData.some((x) => x.id === selectedProjectId)) {
         setSelectedProjectId(null);
@@ -455,6 +534,25 @@ export function App() {
       setMsg('error', (e as Error).message);
     } finally {
       setInventoryDetailLoading(false);
+    }
+  }
+
+  async function loadFinishedProductDetail(finishedProductId: number) {
+    setFinishedProductDetailLoading(true);
+    try {
+      const [detail, bomItems] = await Promise.all([
+        apiClient.getFinishedProduct(finishedProductId),
+        apiClient.listFinishedProductBom(finishedProductId),
+      ]);
+      setFinishedProducts((prev) => prev.map((item) => (item.id === detail.id ? detail : item)));
+      setFinishedProductBomItems(bomItems);
+      setSelectedFinishedProductId(finishedProductId);
+      setFinishedProductBomPage(1);
+      setTab('finishedProducts');
+    } catch (e) {
+      setMsg('error', (e as Error).message);
+    } finally {
+      setFinishedProductDetailLoading(false);
     }
   }
 
@@ -570,6 +668,67 @@ export function App() {
     }, '分类删除成功', false);
   }
 
+  function openFinishedProductEditor(item: FinishedProduct) {
+    setFinishedProductEditForm({
+      id: item.id,
+      skuProductId: item.sku_product_id,
+      productName: item.product_name,
+      note: item.note || '',
+      status: item.status,
+    });
+    setModal('finishedProductEdit');
+  }
+
+  function openFinishedProductBomEditor(item: FinishedProductBomItem) {
+    setFinishedProductBomEditForm({
+      itemId: item.id,
+      materialProductId: item.material_product_id,
+      qtyPerSet: item.qty_per_set,
+      note: item.note || '',
+    });
+    setModal('finishedProductBomEdit');
+  }
+
+  async function updateFinishedProduct() {
+    if (!isPositive(finishedProductEditForm.id)) return setMsg('error', '产品记录无效');
+    if (!isPositive(finishedProductEditForm.skuProductId)) return setMsg('error', '请选择绑定SKU');
+    if (!finishedProductEditForm.productName.trim()) return setMsg('error', '产品名称不能为空');
+
+    const finishedProductId = toNum(finishedProductEditForm.id);
+    await runAction(async () => {
+      await apiClient.updateFinishedProduct(finishedProductId, {
+        sku_product_id: toNum(finishedProductEditForm.skuProductId),
+        product_name: finishedProductEditForm.productName.trim(),
+        note: finishedProductEditForm.note.trim(),
+        status: finishedProductEditForm.status,
+      });
+      await loadBase();
+      await loadFinishedProductDetail(finishedProductId);
+    }, '产品更新成功');
+  }
+
+  async function deleteFinishedProduct(item: FinishedProduct) {
+    if (!window.confirm(`确认删除产品 ${item.product_name} / ${item.bound_sku} 吗？\n产品记录及其BOM会一并删除。`)) return;
+    await runAction(async () => {
+      await apiClient.deleteFinishedProduct(item.id);
+      if (selectedFinishedProductId === item.id) {
+        setSelectedFinishedProductId(null);
+        setFinishedProductBomItems([]);
+      }
+      await loadBase();
+    }, '产品删除成功', false);
+  }
+
+  async function deleteFinishedProductBomItem(item: FinishedProductBomItem) {
+    if (!selectedFinishedProductId) return setMsg('error', '请先进入产品详情');
+    if (!window.confirm(`确认删除 BOM 物料 ${item.material_sku} 吗？`)) return;
+    await runAction(async () => {
+      await apiClient.deleteFinishedProductBomItem(selectedFinishedProductId, item.id);
+      await loadBase();
+      await loadFinishedProductDetail(selectedFinishedProductId);
+    }, 'BOM物料删除成功', false);
+  }
+
   async function editInventoryTx(item: InventoryTransaction) {
     if (!canManualFixInventoryTx(item)) {
       setMsg('error', '该流水暂不支持编辑（仅支持入库/出库/在途类/库存调整，且不能关联项目预留记录）');
@@ -675,6 +834,14 @@ export function App() {
   }, [inventoryPage, inventoryPageCount]);
 
   useEffect(() => {
+    if (finishedProductPage > finishedProductPageCount) setFinishedProductPage(finishedProductPageCount);
+  }, [finishedProductPage, finishedProductPageCount]);
+
+  useEffect(() => {
+    if (finishedProductBomPage > finishedProductBomPageCount) setFinishedProductBomPage(finishedProductBomPageCount);
+  }, [finishedProductBomPage, finishedProductBomPageCount]);
+
+  useEffect(() => {
     setInventoryPage(1);
   }, [inventoryKeywordQuery, inventorySkuQuery, inventoryNameQuery, inventorySpecQuery, inventoryCategoryQuery]);
 
@@ -692,10 +859,13 @@ export function App() {
     setUsers([]);
     setCategories([]);
     setProducts([]);
+    setFinishedProducts([]);
     setProjects([]);
     setInventory([]);
     setSelectedInventoryProductId(null);
     setInventoryTransactions([]);
+    setSelectedFinishedProductId(null);
+    setFinishedProductBomItems([]);
     setSelectedProjectId(null);
     setMembers([]);
     setCommits([]);
@@ -716,11 +886,19 @@ export function App() {
     setInventoryNameQuery('');
     setInventorySpecQuery('');
     setInventoryCategoryQuery('');
+    setFinishedProductForm({ skuProductId: '', productName: '', note: '', status: 'active' });
+    setFinishedProductEditForm({ id: '', skuProductId: '', productName: '', note: '', status: 'active' });
+    setFinishedProductBomForm({ materialProductId: '', qtyPerSet: 1, note: '' });
+    setFinishedProductBomEditForm({ itemId: '', materialProductId: '', qtyPerSet: 1, note: '' });
+    setFinishedProductStockForm({ sets: '', note: '' });
+    setFinishedProductProduceForm({ sets: '', note: '' });
     setSkuEditForm({ id: '', sku: '', name: '', categoryId: '', unit: 'pcs', spec: '', safetyStockQty: 0, status: 'active' });
     setEditCommitForm({ commitId: '', title: '', content: '', statusTo: 'active', progress: 0 });
     setSkuPage(1);
     setCategoryPage(1);
     setInventoryPage(1);
+    setFinishedProductPage(1);
+    setFinishedProductBomPage(1);
     setProjectPage(1);
     setToasts([]);
   }
@@ -757,6 +935,7 @@ export function App() {
         <p>{me?.name}（{roleLabel(me?.role || '')}）</p>
         <button className={tab === 'sku' ? 'active' : ''} onClick={() => setTab('sku')}>SKU主数据</button>
         <button className={tab === 'inventory' ? 'active' : ''} onClick={() => setTab('inventory')}>库存</button>
+        <button className={tab === 'finishedProducts' ? 'active' : ''} onClick={() => setTab('finishedProducts')}>产品</button>
         <button className={tab === 'projects' ? 'active' : ''} onClick={() => setTab('projects')}>项目</button>
         {isAdmin && <button className={tab === 'users' ? 'active' : ''} onClick={() => setTab('users')}>用户</button>}
         <button className="ghost" onClick={() => void loadBase()} disabled={loading}>刷新</button>
@@ -1150,6 +1329,141 @@ export function App() {
           </section>
         )}
 
+        {tab === 'finishedProducts' && (
+          <section className="panel panel-inventory">
+            {!selectedFinishedProductId && (
+              <div className="inventory-layout">
+                <div className="toolbar">
+                  <div>
+                    <h3>产品</h3>
+                    <p className="subtle">产品绑定现有 SKU，并通过 BOM 管理用料。</p>
+                  </div>
+                  <div className="tools">
+                    {isAdmin && <button onClick={() => setModal('finishedProduct')}>新增产品</button>}
+                  </div>
+                </div>
+                <div className="table-wrap" ref={finishedProductTableRef}>
+                  <table>
+                    <thead><tr><th>绑定SKU</th><th>产品名称</th><th>SKU名称</th><th>BOM项数</th><th>状态</th><th>备注</th>{isAdmin && <th>操作</th>}</tr></thead>
+                    <tbody>
+                      {pagedFinishedProductRows.map((item) => (
+                        <tr key={item.id}>
+                          <td>{item.bound_sku}</td>
+                          <td><button className="link-btn" onClick={() => void loadFinishedProductDetail(item.id)}>{item.product_name}</button></td>
+                          <td>{item.bound_sku_name}</td>
+                          <td>{item.bom_item_count}</td>
+                          <td>{item.status}</td>
+                          <td>{item.note || '-'}</td>
+                          {isAdmin && (
+                            <td>
+                              <button className="text-btn" onClick={() => openFinishedProductEditor(item)}>编辑</button>
+                              <button className="text-btn danger" onClick={() => void deleteFinishedProduct(item)}>删除</button>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                      {finishedProductRows.length === 0 && <tr><td colSpan={isAdmin ? 7 : 6} className="empty-cell">暂无产品数据</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+                <Pager
+                  total={finishedProductRows.length}
+                  page={finishedProductCurrentPage}
+                  pageCount={finishedProductPageCount}
+                  pageSize={finishedProductPageSize}
+                  onPageChange={setFinishedProductPage}
+                  fixedPageSize
+                />
+              </div>
+            )}
+
+            {selectedFinishedProductId && selectedFinishedProduct && (
+              <div className="inventory-detail">
+                <div className="toolbar">
+                  <div>
+                    <button className="back-btn" onClick={() => { setSelectedFinishedProductId(null); setFinishedProductBomItems([]); }}>返回产品列表</button>
+                    <h3>{selectedFinishedProduct.product_name} / {selectedFinishedProduct.bound_sku}</h3>
+                    <p className="subtle">绑定SKU：{selectedFinishedProduct.bound_sku_name}，状态：{selectedFinishedProduct.status}</p>
+                  </div>
+                  <div className="tools">
+                    {isAdmin && (
+                      <>
+                        <button onClick={() => setModal('finishedProductBom')}>关联物料</button>
+                        <button onClick={() => setModal('finishedProductStock')}>备货</button>
+                        <button onClick={() => setModal('finishedProductProduce')}>生产</button>
+                        <button onClick={() => openFinishedProductEditor(selectedFinishedProduct)}>编辑产品</button>
+                        <button className="danger-btn" onClick={() => void deleteFinishedProduct(selectedFinishedProduct)}>删除产品</button>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {finishedProductDetailLoading && <div className="subtle">产品详情加载中...</div>}
+
+                <div className="split-grid">
+                  <section className="detail-card">
+                    <h4 className="minor-title">产品信息</h4>
+                    <div className="kv-grid">
+                      <span>产品名称</span><strong>{selectedFinishedProduct.product_name}</strong>
+                      <span>绑定SKU</span><strong>{selectedFinishedProduct.bound_sku}</strong>
+                      <span>SKU名称</span><strong>{selectedFinishedProduct.bound_sku_name}</strong>
+                      <span>分类</span><strong>{selectedFinishedProduct.bound_category_name || '-'}</strong>
+                      <span>型号/规格</span><strong>{selectedFinishedProduct.bound_spec || '-'}</strong>
+                      <span>单位</span><strong>{selectedFinishedProduct.bound_unit}</strong>
+                      <span>BOM项数</span><strong>{selectedFinishedProduct.bom_item_count}</strong>
+                      <span>备注</span><strong>{selectedFinishedProduct.note || '-'}</strong>
+                    </div>
+                  </section>
+                  <section className="detail-card">
+                    <h4 className="minor-title">操作说明</h4>
+                    <div className="kv-grid">
+                      <span>备货</span><strong>按 BOM 自动为物料入库</strong>
+                      <span>生产</span><strong>按 BOM 自动为物料出库，并给绑定SKU创建在途</strong>
+                      <span>流水备注</span><strong>会附带产品、套数和备注</strong>
+                    </div>
+                  </section>
+                </div>
+
+                <h4 className="section-title">产品BOM</h4>
+                <div className="table-wrap" ref={finishedProductBomTableRef}>
+                  <table>
+                    <thead><tr><th>序号</th><th>物料SKU</th><th>物料名称</th><th>分类</th><th>型号/规格</th><th>单位</th><th>单套用量</th><th>备注</th>{isAdmin && <th>操作</th>}</tr></thead>
+                    <tbody>
+                      {pagedFinishedProductBomItems.map((item, idx) => (
+                        <tr key={item.id}>
+                          <td>{(finishedProductBomCurrentPage - 1) * finishedProductBomPageSize + idx + 1}</td>
+                          <td>{item.material_sku}</td>
+                          <td>{item.material_name}</td>
+                          <td>{item.material_category_name || '-'}</td>
+                          <td>{item.material_spec || '-'}</td>
+                          <td>{item.material_unit}</td>
+                          <td>{item.qty_per_set}</td>
+                          <td>{item.note || '-'}</td>
+                          {isAdmin && (
+                            <td>
+                              <button className="text-btn" onClick={() => openFinishedProductBomEditor(item)}>编辑</button>
+                              <button className="text-btn danger" onClick={() => void deleteFinishedProductBomItem(item)}>删除</button>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                      {finishedProductBomItems.length === 0 && <tr><td colSpan={isAdmin ? 9 : 8} className="empty-cell">暂无BOM物料</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+                <Pager
+                  total={finishedProductBomItems.length}
+                  page={finishedProductBomCurrentPage}
+                  pageCount={finishedProductBomPageCount}
+                  pageSize={finishedProductBomPageSize}
+                  onPageChange={setFinishedProductBomPage}
+                  fixedPageSize
+                />
+              </div>
+            )}
+          </section>
+        )}
+
         {tab === 'users' && isAdmin && (
           <section className="panel">
             <div className="toolbar">
@@ -1380,6 +1694,153 @@ export function App() {
           <button type="submit">提交</button>
         </form>
       </Modal>
+
+      <Modal open={modal === 'finishedProduct'} title="新增产品" onClose={() => setModal(null)}>
+        <form className="form" onSubmit={(e) => {
+          e.preventDefault();
+          if (!isPositive(finishedProductForm.skuProductId)) return setMsg('error', '请选择绑定SKU');
+          if (!finishedProductForm.productName.trim()) return setMsg('error', '产品名称不能为空');
+          void runAction(async () => {
+            await apiClient.createFinishedProduct({
+              sku_product_id: toNum(finishedProductForm.skuProductId),
+              product_name: finishedProductForm.productName.trim(),
+              note: finishedProductForm.note.trim(),
+              status: finishedProductForm.status,
+            });
+            setFinishedProductForm({ skuProductId: '', productName: '', note: '', status: 'active' });
+            await loadBase();
+          }, '产品创建成功');
+        }}>
+          <select value={finishedProductForm.skuProductId} onChange={(e) => setFinishedProductForm({ ...finishedProductForm, skuProductId: e.target.value ? Number(e.target.value) : '' })}>
+            <option value="">选择绑定SKU</option>
+            {products.map((p) => <option key={p.id} value={p.id}>{p.sku} / {p.name}</option>)}
+          </select>
+          <input placeholder="产品名称" value={finishedProductForm.productName} onChange={(e) => setFinishedProductForm({ ...finishedProductForm, productName: e.target.value })} />
+          <input placeholder="备注" value={finishedProductForm.note} onChange={(e) => setFinishedProductForm({ ...finishedProductForm, note: e.target.value })} />
+          <select value={finishedProductForm.status} onChange={(e) => setFinishedProductForm({ ...finishedProductForm, status: e.target.value as 'active' | 'inactive' })}>
+            <option value="active">active</option>
+            <option value="inactive">inactive</option>
+          </select>
+          <button type="submit">提交</button>
+        </form>
+      </Modal>
+
+      <Modal open={modal === 'finishedProductEdit'} title="编辑产品" onClose={() => setModal(null)}>
+        <form className="form" onSubmit={(e) => {
+          e.preventDefault();
+          void updateFinishedProduct();
+        }}>
+          <select value={finishedProductEditForm.skuProductId} onChange={(e) => setFinishedProductEditForm({ ...finishedProductEditForm, skuProductId: e.target.value ? Number(e.target.value) : '' })}>
+            <option value="">选择绑定SKU</option>
+            {products.map((p) => <option key={p.id} value={p.id}>{p.sku} / {p.name}</option>)}
+          </select>
+          <input placeholder="产品名称" value={finishedProductEditForm.productName} onChange={(e) => setFinishedProductEditForm({ ...finishedProductEditForm, productName: e.target.value })} />
+          <input placeholder="备注" value={finishedProductEditForm.note} onChange={(e) => setFinishedProductEditForm({ ...finishedProductEditForm, note: e.target.value })} />
+          <select value={finishedProductEditForm.status} onChange={(e) => setFinishedProductEditForm({ ...finishedProductEditForm, status: e.target.value as 'active' | 'inactive' })}>
+            <option value="active">active</option>
+            <option value="inactive">inactive</option>
+          </select>
+          <button type="submit">保存</button>
+        </form>
+      </Modal>
+
+      <Modal open={modal === 'finishedProductBom'} title="关联BOM物料" onClose={() => setModal(null)}>
+        <form className="form" onSubmit={(e) => {
+          e.preventDefault();
+          if (!selectedFinishedProductId) return setMsg('error', '请先进入产品详情');
+          if (!isPositive(finishedProductBomForm.materialProductId) || !isPositive(finishedProductBomForm.qtyPerSet)) return setMsg('error', '请选择物料并填写单套用量');
+          void runAction(async () => {
+            await apiClient.createFinishedProductBomItem(selectedFinishedProductId, {
+              material_product_id: toNum(finishedProductBomForm.materialProductId),
+              qty_per_set: toNum(finishedProductBomForm.qtyPerSet),
+              note: finishedProductBomForm.note.trim(),
+            });
+            setFinishedProductBomForm({ materialProductId: '', qtyPerSet: 1, note: '' });
+            await loadBase();
+            await loadFinishedProductDetail(selectedFinishedProductId);
+          }, 'BOM物料添加成功');
+        }}>
+          <select value={finishedProductBomForm.materialProductId} onChange={(e) => setFinishedProductBomForm({ ...finishedProductBomForm, materialProductId: e.target.value ? Number(e.target.value) : '' })}>
+            <option value="">选择物料SKU</option>
+            {products.map((p) => <option key={p.id} value={p.id}>{p.sku} / {p.name}</option>)}
+          </select>
+          <input type="number" min={1} placeholder="单套用量" value={finishedProductBomForm.qtyPerSet} onChange={(e) => setFinishedProductBomForm({ ...finishedProductBomForm, qtyPerSet: e.target.value ? Number(e.target.value) : '' })} />
+          <input placeholder="备注" value={finishedProductBomForm.note} onChange={(e) => setFinishedProductBomForm({ ...finishedProductBomForm, note: e.target.value })} />
+          <button type="submit">提交</button>
+        </form>
+      </Modal>
+
+      <Modal open={modal === 'finishedProductBomEdit'} title="编辑BOM物料" onClose={() => setModal(null)}>
+        <form className="form" onSubmit={(e) => {
+          e.preventDefault();
+          if (!selectedFinishedProductId) return setMsg('error', '请先进入产品详情');
+          if (!isPositive(finishedProductBomEditForm.itemId) || !isPositive(finishedProductBomEditForm.materialProductId) || !isPositive(finishedProductBomEditForm.qtyPerSet)) {
+            return setMsg('error', '请选择物料并填写单套用量');
+          }
+          void runAction(async () => {
+            await apiClient.updateFinishedProductBomItem(selectedFinishedProductId, toNum(finishedProductBomEditForm.itemId), {
+              material_product_id: toNum(finishedProductBomEditForm.materialProductId),
+              qty_per_set: toNum(finishedProductBomEditForm.qtyPerSet),
+              note: finishedProductBomEditForm.note.trim(),
+            });
+            await loadBase();
+            await loadFinishedProductDetail(selectedFinishedProductId);
+          }, 'BOM物料更新成功');
+        }}>
+          <select value={finishedProductBomEditForm.materialProductId} onChange={(e) => setFinishedProductBomEditForm({ ...finishedProductBomEditForm, materialProductId: e.target.value ? Number(e.target.value) : '' })}>
+            <option value="">选择物料SKU</option>
+            {products.map((p) => <option key={p.id} value={p.id}>{p.sku} / {p.name}</option>)}
+          </select>
+          <input type="number" min={1} placeholder="单套用量" value={finishedProductBomEditForm.qtyPerSet} onChange={(e) => setFinishedProductBomEditForm({ ...finishedProductBomEditForm, qtyPerSet: e.target.value ? Number(e.target.value) : '' })} />
+          <input placeholder="备注" value={finishedProductBomEditForm.note} onChange={(e) => setFinishedProductBomEditForm({ ...finishedProductBomEditForm, note: e.target.value })} />
+          <button type="submit">保存</button>
+        </form>
+      </Modal>
+
+      <Modal open={modal === 'finishedProductStock'} title="产品备货" onClose={() => setModal(null)}>
+        <form className="form" onSubmit={(e) => {
+          e.preventDefault();
+          if (!selectedFinishedProductId) return setMsg('error', '请先进入产品详情');
+          if (!isPositive(finishedProductStockForm.sets)) return setMsg('error', '请输入正整数套数');
+          void runAction(async () => {
+            await apiClient.stockFinishedProduct(selectedFinishedProductId, {
+              sets: toNum(finishedProductStockForm.sets),
+              note: finishedProductStockForm.note.trim(),
+            });
+            setFinishedProductStockForm({ sets: '', note: '' });
+            await loadBase();
+            await loadFinishedProductDetail(selectedFinishedProductId);
+          }, '备货成功');
+        }}>
+          <input value={selectedFinishedProduct?.product_name || ''} readOnly />
+          <input type="number" min={1} placeholder="备货套数" value={finishedProductStockForm.sets} onChange={(e) => setFinishedProductStockForm({ ...finishedProductStockForm, sets: e.target.value ? Number(e.target.value) : '' })} />
+          <input placeholder="备注" value={finishedProductStockForm.note} onChange={(e) => setFinishedProductStockForm({ ...finishedProductStockForm, note: e.target.value })} />
+          <button type="submit">提交</button>
+        </form>
+      </Modal>
+
+      <Modal open={modal === 'finishedProductProduce'} title="产品生产" onClose={() => setModal(null)}>
+        <form className="form" onSubmit={(e) => {
+          e.preventDefault();
+          if (!selectedFinishedProductId) return setMsg('error', '请先进入产品详情');
+          if (!isPositive(finishedProductProduceForm.sets)) return setMsg('error', '请输入正整数套数');
+          void runAction(async () => {
+            await apiClient.produceFinishedProduct(selectedFinishedProductId, {
+              sets: toNum(finishedProductProduceForm.sets),
+              note: finishedProductProduceForm.note.trim(),
+            });
+            setFinishedProductProduceForm({ sets: '', note: '' });
+            await loadBase();
+            await loadFinishedProductDetail(selectedFinishedProductId);
+          }, '生产成功');
+        }}>
+          <input value={selectedFinishedProduct?.product_name || ''} readOnly />
+          <input type="number" min={1} placeholder="生产套数" value={finishedProductProduceForm.sets} onChange={(e) => setFinishedProductProduceForm({ ...finishedProductProduceForm, sets: e.target.value ? Number(e.target.value) : '' })} />
+          <input placeholder="备注" value={finishedProductProduceForm.note} onChange={(e) => setFinishedProductProduceForm({ ...finishedProductProduceForm, note: e.target.value })} />
+          <button type="submit">提交</button>
+        </form>
+      </Modal>
+
       <Modal open={modal === 'project'} title="新增项目" onClose={() => setModal(null)}>
         <form className="form" onSubmit={(e) => {
           e.preventDefault();

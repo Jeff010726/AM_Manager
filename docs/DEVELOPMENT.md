@@ -15,6 +15,7 @@
 
 ## 3. 页面信息架构（Web）
 - `SKU主数据`：仅展示 SKU 主数据（SKU 编号、分类、型号/规格、单位、安全库存、状态），不展示库存数量。
+- `产品`：绑定已有 SKU，维护产品信息与 BOM，并执行备货/生产动作。
 - `库存`：仅展示库存口径列表；点击 SKU 进入详情页，查看 SKU 信息 + 库存流水。
 - `项目`：仅展示项目列表；点击项目进入详情页，查看成员、预留库存、Commit 记录。
 - `用户`（仅管理员）：用户创建与账号停用（软删除）。
@@ -43,6 +44,13 @@
   - `GET/POST /api/products`
   - `PUT /api/products/:id`
   - `DELETE /api/products/:id`
+- 产品与 BOM：
+  - `GET/POST /api/finished-products`
+  - `GET/PUT/DELETE /api/finished-products/:id`
+  - `GET/POST /api/finished-products/:id/bom`
+  - `PUT/DELETE /api/finished-products/:id/bom/:itemId`
+  - `POST /api/finished-products/:id/stock`
+  - `POST /api/finished-products/:id/produce`
 - 项目：
   - `GET/POST /api/projects`
   - `DELETE /api/projects/:id`

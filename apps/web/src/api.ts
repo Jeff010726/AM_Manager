@@ -1,6 +1,8 @@
 ﻿import type {
   ApiEnvelope,
   Category,
+  FinishedProduct,
+  FinishedProductBomItem,
   InventoryItem,
   InventoryTransaction,
   LoginResponse,
@@ -153,6 +155,93 @@ export class ApiClient {
   deleteProduct(productId: number) {
     return this.request<{ id: number }>(`/api/products/${productId}`, {
       method: 'DELETE',
+    });
+  }
+
+  listFinishedProducts(q = '') {
+    const query = q ? `?q=${encodeURIComponent(q)}` : '';
+    return this.request<FinishedProduct[]>(`/api/finished-products${query}`);
+  }
+
+  getFinishedProduct(finishedProductId: number) {
+    return this.request<FinishedProduct>(`/api/finished-products/${finishedProductId}`);
+  }
+
+  createFinishedProduct(payload: {
+    sku_product_id: number;
+    product_name: string;
+    note?: string;
+    status: 'active' | 'inactive';
+  }) {
+    return this.request<{ id: number }>('/api/finished-products', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  updateFinishedProduct(
+    finishedProductId: number,
+    payload: {
+      sku_product_id: number;
+      product_name: string;
+      note?: string;
+      status: 'active' | 'inactive';
+    },
+  ) {
+    return this.request<{ id: number }>(`/api/finished-products/${finishedProductId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  deleteFinishedProduct(finishedProductId: number) {
+    return this.request<{ id: number }>(`/api/finished-products/${finishedProductId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  listFinishedProductBom(finishedProductId: number) {
+    return this.request<FinishedProductBomItem[]>(`/api/finished-products/${finishedProductId}/bom`);
+  }
+
+  createFinishedProductBomItem(
+    finishedProductId: number,
+    payload: { material_product_id: number; qty_per_set: number; note?: string },
+  ) {
+    return this.request<{ id: number }>(`/api/finished-products/${finishedProductId}/bom`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  updateFinishedProductBomItem(
+    finishedProductId: number,
+    bomItemId: number,
+    payload: { material_product_id: number; qty_per_set: number; note?: string },
+  ) {
+    return this.request<{ id: number }>(`/api/finished-products/${finishedProductId}/bom/${bomItemId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  deleteFinishedProductBomItem(finishedProductId: number, bomItemId: number) {
+    return this.request<{ id: number }>(`/api/finished-products/${finishedProductId}/bom/${bomItemId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  stockFinishedProduct(finishedProductId: number, payload: { sets: number; note?: string }) {
+    return this.request<{ id: number; sets: number; bom_item_count: number }>(`/api/finished-products/${finishedProductId}/stock`, {
+      method: 'POST',
+      body: JSON.stringify({ ...payload, idempotency_key: crypto.randomUUID() }),
+    });
+  }
+
+  produceFinishedProduct(finishedProductId: number, payload: { sets: number; note?: string }) {
+    return this.request<{ id: number; sets: number; bom_item_count: number }>(`/api/finished-products/${finishedProductId}/produce`, {
+      method: 'POST',
+      body: JSON.stringify({ ...payload, idempotency_key: crypto.randomUUID() }),
     });
   }
 

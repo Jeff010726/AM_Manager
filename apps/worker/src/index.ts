@@ -50,6 +50,35 @@ type InventoryTxRow = {
   edited_from_tx_id: number | null;
 };
 
+type FinishedProductDetailRow = {
+  id: number;
+  sku_product_id: number;
+  product_name: string;
+  note: string | null;
+  status: 'active' | 'inactive';
+  created_at: string;
+  updated_at: string;
+  bound_sku: string;
+  bound_sku_name: string;
+  bound_unit: string;
+  bound_spec: string | null;
+  bound_category_name: string | null;
+  bom_item_count: number;
+};
+
+type FinishedProductBomRow = {
+  id: number;
+  finished_product_id: number;
+  material_product_id: number;
+  qty_per_set: number;
+  note: string | null;
+  material_sku: string;
+  material_name: string;
+  material_unit: string;
+  material_spec: string | null;
+  material_category_name: string | null;
+};
+
 app.use('*', async (c, next) => {
   const requestId = c.req.header('x-request-id') || crypto.randomUUID();
   c.set('requestId', requestId);
@@ -534,6 +563,333 @@ app.delete('/api/products/:id', async (c) => {
 
   await writeAudit(c, 'product.delete', 'product', String(productId), before, null);
   return c.json({ success: true, data: { id: productId } });
+});
+
+app.get('/api/finished-products', async (c) => {
+  const q = (c.req.query('q') || '').trim();
+  const rows = await c.env.DB.prepare(
+    `SELECT fp.id, fp.sku_product_id, fp.product_name, fp.note, fp.status, fp.created_at, fp.updated_at,
+            p.sku AS bound_sku, p.name AS bound_sku_name, p.unit AS bound_unit, p.spec AS bound_spec,
+            cat.name AS bound_category_name,
+            (SELECT COUNT(1) FROM finished_product_bom_items bom WHERE bom.finished_product_id = fp.id) AS bom_item_count
+     FROM finished_products fp
+     JOIN products p ON p.id = fp.sku_product_id
+     JOIN categories cat ON cat.id = p.category_id
+     WHERE (? = '' OR fp.product_name LIKE '%' || ? || '%' OR p.sku LIKE '%' || ? || '%' OR p.name LIKE '%' || ? || '%')
+     ORDER BY fp.id DESC`,
+  )
+    .bind(q, q, q, q)
+    .all();
+  return c.json({ success: true, data: rows.results || [] });
+});
+
+app.post('/api/finished-products', async (c) => {
+  const guard = requireAdmin(c);
+  if (guard) return guard;
+
+  const schema = z.object({
+    sku_product_id: z.number().int().positive(),
+    product_name: z.string().min(1),
+    note: z.string().optional().nullable(),
+    status: z.enum(['active', 'inactive']).default('active'),
+  });
+  const body = schema.safeParse(await c.req.json().catch(() => ({})));
+  if (!body.success) return apiError(c, 400, 'INVALID_PARAMS', body.error.issues[0]?.message || 'Invalid payload');
+  if (!(await existsById(c.env.DB, 'products', body.data.sku_product_id))) {
+    return apiError(c, 404, 'NOT_FOUND', 'Bound SKU not found');
+  }
+
+  try {
+    const run = await c.env.DB.prepare(
+      `INSERT INTO finished_products (sku_product_id, product_name, note, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(body.data.sku_product_id, body.data.product_name, body.data.note ?? null, body.data.status, now(), now())
+      .run();
+    const id = Number(run.meta.last_row_id);
+    await writeAudit(c, 'finished_product.create', 'finished_product', String(id), null, body.data);
+    return c.json({ success: true, data: { id } }, 201);
+  } catch (error) {
+    if (String(error).includes('UNIQUE')) return apiError(c, 409, 'BOUND_SKU_EXISTS', 'This SKU is already bound to another product');
+    throw error;
+  }
+});
+
+app.get('/api/finished-products/:id', async (c) => {
+  const finishedProductId = Number(c.req.param('id'));
+  if (!Number.isInteger(finishedProductId) || finishedProductId <= 0) {
+    return apiError(c, 400, 'INVALID_PARAMS', 'Invalid product id');
+  }
+
+  const row = await getFinishedProductDetail(c.env.DB, finishedProductId);
+  if (!row) return apiError(c, 404, 'NOT_FOUND', 'Finished product not found');
+  return c.json({ success: true, data: row });
+});
+
+app.put('/api/finished-products/:id', async (c) => {
+  const guard = requireAdmin(c);
+  if (guard) return guard;
+
+  const finishedProductId = Number(c.req.param('id'));
+  const before = await getFinishedProductDetail(c.env.DB, finishedProductId);
+  if (!before) return apiError(c, 404, 'NOT_FOUND', 'Finished product not found');
+
+  const schema = z.object({
+    sku_product_id: z.number().int().positive(),
+    product_name: z.string().min(1),
+    note: z.string().optional().nullable(),
+    status: z.enum(['active', 'inactive']),
+  });
+  const body = schema.safeParse(await c.req.json().catch(() => ({})));
+  if (!body.success) return apiError(c, 400, 'INVALID_PARAMS', body.error.issues[0]?.message || 'Invalid payload');
+  if (!(await existsById(c.env.DB, 'products', body.data.sku_product_id))) {
+    return apiError(c, 404, 'NOT_FOUND', 'Bound SKU not found');
+  }
+
+  try {
+    await c.env.DB.prepare(
+      `UPDATE finished_products
+       SET sku_product_id = ?, product_name = ?, note = ?, status = ?, updated_at = ?
+       WHERE id = ?`,
+    )
+      .bind(body.data.sku_product_id, body.data.product_name, body.data.note ?? null, body.data.status, now(), finishedProductId)
+      .run();
+    await writeAudit(c, 'finished_product.update', 'finished_product', String(finishedProductId), before, body.data);
+    return c.json({ success: true, data: { id: finishedProductId } });
+  } catch (error) {
+    if (String(error).includes('UNIQUE')) return apiError(c, 409, 'BOUND_SKU_EXISTS', 'This SKU is already bound to another product');
+    throw error;
+  }
+});
+
+app.delete('/api/finished-products/:id', async (c) => {
+  const guard = requireAdmin(c);
+  if (guard) return guard;
+
+  const finishedProductId = Number(c.req.param('id'));
+  if (!Number.isInteger(finishedProductId) || finishedProductId <= 0) {
+    return apiError(c, 400, 'INVALID_PARAMS', 'Invalid product id');
+  }
+
+  const before = await getFinishedProductDetail(c.env.DB, finishedProductId);
+  if (!before) return apiError(c, 404, 'NOT_FOUND', 'Finished product not found');
+
+  await c.env.DB.prepare('DELETE FROM finished_product_bom_items WHERE finished_product_id = ?').bind(finishedProductId).run();
+  await c.env.DB.prepare('DELETE FROM finished_products WHERE id = ?').bind(finishedProductId).run();
+
+  await writeAudit(c, 'finished_product.delete', 'finished_product', String(finishedProductId), before, null);
+  return c.json({ success: true, data: { id: finishedProductId } });
+});
+
+app.get('/api/finished-products/:id/bom', async (c) => {
+  const finishedProductId = Number(c.req.param('id'));
+  if (!(await existsById(c.env.DB, 'finished_products', finishedProductId))) {
+    return apiError(c, 404, 'NOT_FOUND', 'Finished product not found');
+  }
+  return c.json({ success: true, data: await getFinishedProductBom(c.env.DB, finishedProductId) });
+});
+
+app.post('/api/finished-products/:id/bom', async (c) => {
+  const guard = requireAdmin(c);
+  if (guard) return guard;
+
+  const finishedProductId = Number(c.req.param('id'));
+  if (!(await existsById(c.env.DB, 'finished_products', finishedProductId))) {
+    return apiError(c, 404, 'NOT_FOUND', 'Finished product not found');
+  }
+
+  const schema = z.object({
+    material_product_id: z.number().int().positive(),
+    qty_per_set: z.number().int().positive(),
+    note: z.string().optional().nullable(),
+  });
+  const body = schema.safeParse(await c.req.json().catch(() => ({})));
+  if (!body.success) return apiError(c, 400, 'INVALID_PARAMS', body.error.issues[0]?.message || 'Invalid payload');
+  if (!(await existsById(c.env.DB, 'products', body.data.material_product_id))) {
+    return apiError(c, 404, 'NOT_FOUND', 'Material SKU not found');
+  }
+
+  try {
+    const run = await c.env.DB.prepare(
+      `INSERT INTO finished_product_bom_items (finished_product_id, material_product_id, qty_per_set, note, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(finishedProductId, body.data.material_product_id, body.data.qty_per_set, body.data.note ?? null, now(), now())
+      .run();
+    const id = Number(run.meta.last_row_id);
+    await writeAudit(c, 'finished_product_bom.create', 'finished_product', String(finishedProductId), null, body.data);
+    return c.json({ success: true, data: { id } }, 201);
+  } catch (error) {
+    if (String(error).includes('UNIQUE')) return apiError(c, 409, 'BOM_MATERIAL_EXISTS', 'This material is already linked');
+    throw error;
+  }
+});
+
+app.put('/api/finished-products/:id/bom/:itemId', async (c) => {
+  const guard = requireAdmin(c);
+  if (guard) return guard;
+
+  const finishedProductId = Number(c.req.param('id'));
+  const bomItemId = Number(c.req.param('itemId'));
+  const before = await c.env.DB.prepare('SELECT * FROM finished_product_bom_items WHERE id = ? AND finished_product_id = ?')
+    .bind(bomItemId, finishedProductId)
+    .first();
+  if (!before) return apiError(c, 404, 'NOT_FOUND', 'BOM item not found');
+
+  const schema = z.object({
+    material_product_id: z.number().int().positive(),
+    qty_per_set: z.number().int().positive(),
+    note: z.string().optional().nullable(),
+  });
+  const body = schema.safeParse(await c.req.json().catch(() => ({})));
+  if (!body.success) return apiError(c, 400, 'INVALID_PARAMS', body.error.issues[0]?.message || 'Invalid payload');
+  if (!(await existsById(c.env.DB, 'products', body.data.material_product_id))) {
+    return apiError(c, 404, 'NOT_FOUND', 'Material SKU not found');
+  }
+
+  try {
+    await c.env.DB.prepare(
+      `UPDATE finished_product_bom_items
+       SET material_product_id = ?, qty_per_set = ?, note = ?, updated_at = ?
+       WHERE id = ? AND finished_product_id = ?`,
+    )
+      .bind(body.data.material_product_id, body.data.qty_per_set, body.data.note ?? null, now(), bomItemId, finishedProductId)
+      .run();
+    await writeAudit(c, 'finished_product_bom.update', 'finished_product', String(finishedProductId), before, body.data);
+    return c.json({ success: true, data: { id: bomItemId } });
+  } catch (error) {
+    if (String(error).includes('UNIQUE')) return apiError(c, 409, 'BOM_MATERIAL_EXISTS', 'This material is already linked');
+    throw error;
+  }
+});
+
+app.delete('/api/finished-products/:id/bom/:itemId', async (c) => {
+  const guard = requireAdmin(c);
+  if (guard) return guard;
+
+  const finishedProductId = Number(c.req.param('id'));
+  const bomItemId = Number(c.req.param('itemId'));
+  const before = await c.env.DB.prepare('SELECT * FROM finished_product_bom_items WHERE id = ? AND finished_product_id = ?')
+    .bind(bomItemId, finishedProductId)
+    .first();
+  if (!before) return apiError(c, 404, 'NOT_FOUND', 'BOM item not found');
+
+  await c.env.DB.prepare('DELETE FROM finished_product_bom_items WHERE id = ? AND finished_product_id = ?')
+    .bind(bomItemId, finishedProductId)
+    .run();
+  await writeAudit(c, 'finished_product_bom.delete', 'finished_product', String(finishedProductId), before, null);
+  return c.json({ success: true, data: { id: bomItemId } });
+});
+
+app.post('/api/finished-products/:id/stock', async (c) => {
+  const guard = requireAdmin(c);
+  if (guard) return guard;
+
+  const finishedProductId = Number(c.req.param('id'));
+  const body = await parseInventoryBody(c, z.object({ sets: z.number().int().positive(), note: z.string().optional().nullable() }));
+  if (body instanceof Response) return body;
+
+  return withIdempotency(c, body.idempotency_key, `/finished-products/${finishedProductId}/stock`, async () => {
+    const finishedProduct = await getFinishedProductDetail(c.env.DB, finishedProductId);
+    if (!finishedProduct) return apiError(c, 404, 'NOT_FOUND', 'Finished product not found');
+    const bomItems = await getFinishedProductBom(c.env.DB, finishedProductId);
+    if (bomItems.length === 0) return apiError(c, 409, 'EMPTY_BOM', 'BOM is empty');
+
+    const reason = buildFinishedProductReason('备货', finishedProduct, body.sets, body.note ?? null);
+    for (const item of bomItems) {
+      const qty = Number(item.qty_per_set) * body.sets;
+      const applyRes = await applyInventoryBalanceDelta(c.env.DB, Number(item.material_product_id), qty, 0, 0, 0);
+      if (!applyRes.ok) return apiError(c, 409, 'INVALID_STOCK_ACTION', applyRes.message);
+      await insertInventoryTx(c, {
+        product_id: Number(item.material_product_id),
+        operation_type: 'INBOUND',
+        qty,
+        delta_on_hand: qty,
+        delta_in_transit: 0,
+        delta_reserved: 0,
+        delta_consumed: 0,
+        project_id: null,
+        reservation_id: null,
+        reason,
+        idempotency_key: `${body.idempotency_key}:stock:${item.material_product_id}`,
+      });
+    }
+
+    await writeAudit(c, 'finished_product.stock', 'finished_product', String(finishedProductId), null, {
+      sets: body.sets,
+      note: body.note ?? null,
+      bom_item_count: bomItems.length,
+    });
+    return c.json({ success: true, data: { id: finishedProductId, sets: body.sets, bom_item_count: bomItems.length } });
+  });
+});
+
+app.post('/api/finished-products/:id/produce', async (c) => {
+  const guard = requireAdmin(c);
+  if (guard) return guard;
+
+  const finishedProductId = Number(c.req.param('id'));
+  const body = await parseInventoryBody(c, z.object({ sets: z.number().int().positive(), note: z.string().optional().nullable() }));
+  if (body instanceof Response) return body;
+
+  return withIdempotency(c, body.idempotency_key, `/finished-products/${finishedProductId}/produce`, async () => {
+    const finishedProduct = await getFinishedProductDetail(c.env.DB, finishedProductId);
+    if (!finishedProduct) return apiError(c, 404, 'NOT_FOUND', 'Finished product not found');
+    const bomItems = await getFinishedProductBom(c.env.DB, finishedProductId);
+    if (bomItems.length === 0) return apiError(c, 409, 'EMPTY_BOM', 'BOM is empty');
+
+    for (const item of bomItems) {
+      const qty = Number(item.qty_per_set) * body.sets;
+      const inventory = await getInventoryByProduct(c.env.DB, Number(item.material_product_id)) as { available_qty?: number } | null;
+      if (!inventory || Number(inventory.available_qty || 0) < qty) {
+        return apiError(c, 409, 'INSUFFICIENT_AVAILABLE_STOCK', `可用库存不足：${item.material_sku} 需要 ${qty}`);
+      }
+    }
+
+    const reason = buildFinishedProductReason('生产', finishedProduct, body.sets, body.note ?? null);
+    for (const item of bomItems) {
+      const qty = Number(item.qty_per_set) * body.sets;
+      const applyRes = await applyInventoryBalanceDelta(c.env.DB, Number(item.material_product_id), -qty, 0, 0, qty);
+      if (!applyRes.ok) return apiError(c, 409, 'INVALID_PRODUCE_ACTION', applyRes.message);
+      await insertInventoryTx(c, {
+        product_id: Number(item.material_product_id),
+        operation_type: 'OUTBOUND',
+        qty,
+        delta_on_hand: -qty,
+        delta_in_transit: 0,
+        delta_reserved: 0,
+        delta_consumed: qty,
+        project_id: null,
+        reservation_id: null,
+        reason,
+        idempotency_key: `${body.idempotency_key}:produce-material:${item.material_product_id}`,
+      });
+    }
+
+    const transitRes = await applyInventoryBalanceDelta(c.env.DB, finishedProduct.sku_product_id, 0, body.sets, 0, 0);
+    if (!transitRes.ok) return apiError(c, 409, 'INVALID_PRODUCE_ACTION', transitRes.message);
+    await insertInventoryTx(c, {
+      product_id: finishedProduct.sku_product_id,
+      operation_type: 'TRANSIT_CREATE',
+      qty: body.sets,
+      delta_on_hand: 0,
+      delta_in_transit: body.sets,
+      delta_reserved: 0,
+      delta_consumed: 0,
+      project_id: null,
+      reservation_id: null,
+      reason,
+      idempotency_key: `${body.idempotency_key}:produce-finished:${finishedProduct.sku_product_id}`,
+    });
+
+    await writeAudit(c, 'finished_product.produce', 'finished_product', String(finishedProductId), null, {
+      sets: body.sets,
+      note: body.note ?? null,
+      bom_item_count: bomItems.length,
+      finished_sku_product_id: finishedProduct.sku_product_id,
+    });
+    return c.json({ success: true, data: { id: finishedProductId, sets: body.sets, bom_item_count: bomItems.length } });
+  });
 });
 
 app.get('/api/projects', async (c) => {
@@ -1821,6 +2177,43 @@ async function ensureBalanceRow(db: D1Database, productId: number) {
     .run();
 }
 
+async function getFinishedProductDetail(db: D1Database, finishedProductId: number) {
+  const row = await db.prepare(
+    `SELECT fp.id, fp.sku_product_id, fp.product_name, fp.note, fp.status, fp.created_at, fp.updated_at,
+            p.sku AS bound_sku, p.name AS bound_sku_name, p.unit AS bound_unit, p.spec AS bound_spec,
+            cat.name AS bound_category_name,
+            (SELECT COUNT(1) FROM finished_product_bom_items bom WHERE bom.finished_product_id = fp.id) AS bom_item_count
+     FROM finished_products fp
+     JOIN products p ON p.id = fp.sku_product_id
+     JOIN categories cat ON cat.id = p.category_id
+     WHERE fp.id = ?`,
+  )
+    .bind(finishedProductId)
+    .first();
+  return (row || null) as FinishedProductDetailRow | null;
+}
+
+async function getFinishedProductBom(db: D1Database, finishedProductId: number) {
+  const rows = await db.prepare(
+    `SELECT bom.id, bom.finished_product_id, bom.material_product_id, bom.qty_per_set, bom.note, bom.created_at, bom.updated_at,
+            p.sku AS material_sku, p.name AS material_name, p.unit AS material_unit, p.spec AS material_spec,
+            cat.name AS material_category_name
+     FROM finished_product_bom_items bom
+     JOIN products p ON p.id = bom.material_product_id
+     JOIN categories cat ON cat.id = p.category_id
+     WHERE bom.finished_product_id = ?
+     ORDER BY bom.id ASC`,
+  )
+    .bind(finishedProductId)
+    .all();
+  return (rows.results || []) as FinishedProductBomRow[];
+}
+
+function buildFinishedProductReason(action: '备货' | '生产', finishedProduct: FinishedProductDetailRow, sets: number, note: string | null) {
+  const base = `${action}产品 ${finishedProduct.product_name} / ${finishedProduct.bound_sku} x${sets}`;
+  return note?.trim() ? `${base}：${note.trim()}` : base;
+}
+
 async function deleteProjectCascade(c: any, projectId: number, reasonPrefix: string) {
   const before = await c.env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(projectId).first() as { id: number; project_code: string } | null;
   if (!before) return null;
@@ -1876,6 +2269,13 @@ async function deleteProjectCascade(c: any, projectId: number, reasonPrefix: str
 }
 
 async function deleteProductCascade(db: D1Database, productId: number) {
+  const finishedRows = await db.prepare('SELECT id FROM finished_products WHERE sku_product_id = ?').bind(productId).all<{ id: number }>();
+  const finishedIds = (finishedRows.results || []).map((x) => Number(x.id)).filter((x) => Number.isInteger(x) && x > 0);
+  for (const finishedId of finishedIds) {
+    await db.prepare('DELETE FROM finished_product_bom_items WHERE finished_product_id = ?').bind(finishedId).run();
+  }
+  await db.prepare('DELETE FROM finished_product_bom_items WHERE material_product_id = ?').bind(productId).run();
+  await db.prepare('DELETE FROM finished_products WHERE sku_product_id = ?').bind(productId).run();
   await db.prepare('DELETE FROM inventory_transactions WHERE product_id = ?').bind(productId).run();
   await db.prepare('DELETE FROM project_consumptions WHERE product_id = ?').bind(productId).run();
   await db.prepare('DELETE FROM project_reservations WHERE product_id = ?').bind(productId).run();
