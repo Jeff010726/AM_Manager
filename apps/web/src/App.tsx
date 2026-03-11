@@ -137,8 +137,6 @@ function useAutoPageSize(fallback: number, deps: readonly unknown[]) {
 
     const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(syncPageSize) : null;
     resizeObserver?.observe(container);
-    const table = container.querySelector('table');
-    if (table) resizeObserver?.observe(table);
 
     window.addEventListener('resize', syncPageSize);
     return () => {
