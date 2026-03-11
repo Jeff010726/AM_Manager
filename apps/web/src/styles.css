@@ -266,6 +266,11 @@ button:disabled {
   min-height: 0;
 }
 
+.inventory-layout,
+.inventory-detail {
+  flex: 1;
+}
+
 .filter-panel {
   border: 1px solid rgba(111, 165, 255, 0.24);
   border-radius: 12px;

@@ -19,7 +19,7 @@ type Toast = { id: number; type: 'ok' | 'error'; text: string };
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
 const DEFAULT_SKU_PAGE_SIZE = 15;
 const DEFAULT_CATEGORY_PAGE_SIZE = 10;
-const INVENTORY_PAGE_SIZE = 25;
+const DEFAULT_INVENTORY_PAGE_SIZE = 25;
 const TABLE_ROW_HEIGHT_FALLBACK = 36;
 
 type ModalType =
@@ -310,6 +310,15 @@ export function App() {
     categoryById,
     categoryChildrenMap,
   ]);
+  const [inventoryTableRef, inventoryPageSize] = useAutoPageSize(DEFAULT_INVENTORY_PAGE_SIZE, [
+    tab,
+    inventoryFilteredRows.length,
+    inventoryKeywordQuery,
+    inventorySkuQuery,
+    inventoryNameQuery,
+    inventorySpecQuery,
+    inventoryCategoryQuery,
+  ]);
   const selectedInventoryProduct = selectedInventoryProductId ? productById.get(selectedInventoryProductId) ?? null : null;
   const selectedInventoryBalance = selectedInventoryProductId ? inventoryByProductId.get(selectedInventoryProductId) ?? null : null;
   const selectedProject = selectedProjectId ? projects.find((x) => x.id === selectedProjectId) ?? null : null;
@@ -318,7 +327,7 @@ export function App() {
 
   const skuPageCount = Math.max(1, Math.ceil(skuRows.length / skuPageSize));
   const categoryPageCount = Math.max(1, Math.ceil(categories.length / categoryPageSize));
-  const inventoryPageCount = Math.max(1, Math.ceil(inventoryFilteredRows.length / INVENTORY_PAGE_SIZE));
+  const inventoryPageCount = Math.max(1, Math.ceil(inventoryFilteredRows.length / inventoryPageSize));
   const projectPageCount = Math.max(1, Math.ceil(projectRows.length / projectPageSize));
 
   const skuCurrentPage = Math.min(skuPage, skuPageCount);
@@ -335,8 +344,8 @@ export function App() {
     [categories, categoryCurrentPage, categoryPageSize],
   );
   const pagedInventoryRows = useMemo(
-    () => inventoryFilteredRows.slice((inventoryCurrentPage - 1) * INVENTORY_PAGE_SIZE, inventoryCurrentPage * INVENTORY_PAGE_SIZE),
-    [inventoryFilteredRows, inventoryCurrentPage],
+    () => inventoryFilteredRows.slice((inventoryCurrentPage - 1) * inventoryPageSize, inventoryCurrentPage * inventoryPageSize),
+    [inventoryFilteredRows, inventoryCurrentPage, inventoryPageSize],
   );
   const pagedProjectRows = useMemo(
     () => projectRows.slice((projectCurrentPage - 1) * projectPageSize, projectCurrentPage * projectPageSize),
@@ -904,7 +913,7 @@ export function App() {
                     </div>
                   </div>
                 </div>
-                <div className="table-wrap">
+                <div className="table-wrap" ref={inventoryTableRef}>
                   <table>
                     <thead><tr><th>SKU</th><th>名称</th><th>分类</th><th>型号/规格</th><th>总库存</th><th>在途</th><th>在手</th><th>可用</th><th>预留</th><th>已消耗</th></tr></thead>
                     <tbody>
@@ -933,7 +942,7 @@ export function App() {
                   total={inventoryFilteredRows.length}
                   page={inventoryCurrentPage}
                   pageCount={inventoryPageCount}
-                  pageSize={INVENTORY_PAGE_SIZE}
+                  pageSize={inventoryPageSize}
                   onPageChange={setInventoryPage}
                   fixedPageSize
                 />
