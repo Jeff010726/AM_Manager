@@ -17,6 +17,9 @@ type Tab = 'sku' | 'inventory' | 'projects' | 'users';
 type NumInput = '' | number;
 type Toast = { id: number; type: 'ok' | 'error'; text: string };
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
+const SKU_PAGE_SIZE = 15;
+const CATEGORY_PAGE_SIZE = 10;
+const INVENTORY_PAGE_SIZE = 25;
 
 type ModalType =
   | null
@@ -178,10 +181,9 @@ export function App() {
   const [releaseForm, setReleaseForm] = useState({ reservationId: '' as NumInput, qty: '' as NumInput, reason: '' });
   const [consumeForm, setConsumeForm] = useState({ reservationId: '' as NumInput, qty: '' as NumInput, note: '' });
   const [skuPage, setSkuPage] = useState(1);
+  const [categoryPage, setCategoryPage] = useState(1);
   const [inventoryPage, setInventoryPage] = useState(1);
   const [projectPage, setProjectPage] = useState(1);
-  const [skuPageSize, setSkuPageSize] = useState<number>(20);
-  const [inventoryPageSize, setInventoryPageSize] = useState<number>(20);
   const [projectPageSize, setProjectPageSize] = useState<number>(20);
   const [inventoryKeywordQuery, setInventoryKeywordQuery] = useState('');
   const [inventorySkuQuery, setInventorySkuQuery] = useState('');
@@ -265,21 +267,27 @@ export function App() {
   const isProjectMember = !!me && members.some((m) => m.user_id === me.id);
   const canEditProjectCommits = !!selectedProjectId && (isAdmin || isProjectMember);
 
-  const skuPageCount = Math.max(1, Math.ceil(skuRows.length / skuPageSize));
-  const inventoryPageCount = Math.max(1, Math.ceil(inventoryFilteredRows.length / inventoryPageSize));
+  const skuPageCount = Math.max(1, Math.ceil(skuRows.length / SKU_PAGE_SIZE));
+  const categoryPageCount = Math.max(1, Math.ceil(categories.length / CATEGORY_PAGE_SIZE));
+  const inventoryPageCount = Math.max(1, Math.ceil(inventoryFilteredRows.length / INVENTORY_PAGE_SIZE));
   const projectPageCount = Math.max(1, Math.ceil(projectRows.length / projectPageSize));
 
   const skuCurrentPage = Math.min(skuPage, skuPageCount);
+  const categoryCurrentPage = Math.min(categoryPage, categoryPageCount);
   const inventoryCurrentPage = Math.min(inventoryPage, inventoryPageCount);
   const projectCurrentPage = Math.min(projectPage, projectPageCount);
 
   const pagedSkuRows = useMemo(
-    () => skuRows.slice((skuCurrentPage - 1) * skuPageSize, skuCurrentPage * skuPageSize),
-    [skuRows, skuCurrentPage, skuPageSize],
+    () => skuRows.slice((skuCurrentPage - 1) * SKU_PAGE_SIZE, skuCurrentPage * SKU_PAGE_SIZE),
+    [skuRows, skuCurrentPage],
+  );
+  const pagedCategoryRows = useMemo(
+    () => categories.slice((categoryCurrentPage - 1) * CATEGORY_PAGE_SIZE, categoryCurrentPage * CATEGORY_PAGE_SIZE),
+    [categories, categoryCurrentPage],
   );
   const pagedInventoryRows = useMemo(
-    () => inventoryFilteredRows.slice((inventoryCurrentPage - 1) * inventoryPageSize, inventoryCurrentPage * inventoryPageSize),
-    [inventoryFilteredRows, inventoryCurrentPage, inventoryPageSize],
+    () => inventoryFilteredRows.slice((inventoryCurrentPage - 1) * INVENTORY_PAGE_SIZE, inventoryCurrentPage * INVENTORY_PAGE_SIZE),
+    [inventoryFilteredRows, inventoryCurrentPage],
   );
   const pagedProjectRows = useMemo(
     () => projectRows.slice((projectCurrentPage - 1) * projectPageSize, projectCurrentPage * projectPageSize),
@@ -586,6 +594,10 @@ export function App() {
   }, [skuPage, skuPageCount]);
 
   useEffect(() => {
+    if (categoryPage > categoryPageCount) setCategoryPage(categoryPageCount);
+  }, [categoryPage, categoryPageCount]);
+
+  useEffect(() => {
     if (inventoryPage > inventoryPageCount) setInventoryPage(inventoryPageCount);
   }, [inventoryPage, inventoryPageCount]);
 
@@ -634,6 +646,7 @@ export function App() {
     setSkuEditForm({ id: '', sku: '', name: '', categoryId: '', unit: 'pcs', spec: '', safetyStockQty: 0, status: 'active' });
     setEditCommitForm({ commitId: '', title: '', content: '', statusTo: 'active', progress: 0 });
     setSkuPage(1);
+    setCategoryPage(1);
     setInventoryPage(1);
     setProjectPage(1);
     setToasts([]);
@@ -713,12 +726,9 @@ export function App() {
               total={skuRows.length}
               page={skuCurrentPage}
               pageCount={skuPageCount}
-              pageSize={skuPageSize}
+              pageSize={SKU_PAGE_SIZE}
               onPageChange={setSkuPage}
-              onPageSizeChange={(size) => {
-                setSkuPageSize(size);
-                setSkuPage(1);
-              }}
+              fixedPageSize
             />
 
             <h4 className="section-title">分类列表</h4>
@@ -726,9 +736,9 @@ export function App() {
               <table>
                 <thead><tr><th>序号</th><th>分类名称</th><th>上级分类</th>{isAdmin && <th>操作</th>}</tr></thead>
                 <tbody>
-                  {categories.map((cat, idx) => (
+                  {pagedCategoryRows.map((cat, idx) => (
                     <tr key={cat.id}>
-                      <td>{idx + 1}</td>
+                      <td>{(categoryCurrentPage - 1) * CATEGORY_PAGE_SIZE + idx + 1}</td>
                       <td>{cat.name}</td>
                       <td>{cat.parent_id ? (categoryById.get(cat.parent_id)?.name || '-') : '-'}</td>
                       {isAdmin && <td><button className="text-btn danger" onClick={() => void deleteCategory(cat)}>删除</button></td>}
@@ -738,6 +748,14 @@ export function App() {
                 </tbody>
               </table>
             </div>
+            <Pager
+              total={categories.length}
+              page={categoryCurrentPage}
+              pageCount={categoryPageCount}
+              pageSize={CATEGORY_PAGE_SIZE}
+              onPageChange={setCategoryPage}
+              fixedPageSize
+            />
           </section>
         )}
 
@@ -856,17 +874,14 @@ export function App() {
                     </tbody>
                   </table>
                 </div>
-                <Pager
-                  total={inventoryFilteredRows.length}
-                  page={inventoryCurrentPage}
-                  pageCount={inventoryPageCount}
-                  pageSize={inventoryPageSize}
-                  onPageChange={setInventoryPage}
-                  onPageSizeChange={(size) => {
-                    setInventoryPageSize(size);
-                    setInventoryPage(1);
-                  }}
-                />
+            <Pager
+              total={inventoryFilteredRows.length}
+              page={inventoryCurrentPage}
+              pageCount={inventoryPageCount}
+              pageSize={INVENTORY_PAGE_SIZE}
+              onPageChange={setInventoryPage}
+              fixedPageSize
+            />
               </>
             )}
             {selectedInventoryProductId && selectedInventoryProduct && selectedInventoryBalance && (
@@ -1457,17 +1472,22 @@ function Pager(props: {
   pageCount: number;
   pageSize: number;
   onPageChange: (page: number) => void;
-  onPageSizeChange: (size: number) => void;
+  onPageSizeChange?: (size: number) => void;
+  fixedPageSize?: boolean;
 }) {
-  const { total, page, pageCount, pageSize, onPageChange, onPageSizeChange } = props;
+  const { total, page, pageCount, pageSize, onPageChange, onPageSizeChange, fixedPageSize = false } = props;
   if (total <= 0) return null;
   return (
     <div className="pager">
       <div className="pager-left">
         <span>共 {total} 条</span>
-        <select value={pageSize} onChange={(e) => onPageSizeChange(Number(e.target.value))}>
-          {PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>每页 {size} 条</option>)}
-        </select>
+        {fixedPageSize ? (
+          <span>每页 {pageSize} 条</span>
+        ) : (
+          <select value={pageSize} onChange={(e) => onPageSizeChange?.(Number(e.target.value))}>
+            {PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>每页 {size} 条</option>)}
+          </select>
+        )}
       </div>
       <div className="pager-right">
         <button type="button" className="back-btn" onClick={() => onPageChange(Math.max(1, page - 1))} disabled={page <= 1}>上一页</button>
