@@ -103,24 +103,6 @@ function inventoryTxStatusLabel(tx: InventoryTransaction) {
   return '有效';
 }
 
-function measureAutoPageSize(container: HTMLDivElement | null, fallback: number) {
-  if (!container) return fallback;
-
-  const headerRow = container.querySelector('thead tr');
-  const bodyRows = Array.from(container.querySelectorAll('tbody tr'));
-  const renderedDataRows = bodyRows.filter((row) =>
-    Array.from(row.querySelectorAll('td')).some((cell) => !cell.classList.contains('empty-cell')),
-  );
-  const sampleRow = renderedDataRows[0] || null;
-
-  const headerHeight = Math.ceil(headerRow?.getBoundingClientRect().height ?? 0);
-  const rowHeight = Math.ceil(sampleRow?.getBoundingClientRect().height ?? TABLE_ROW_HEIGHT_FALLBACK);
-  const availableHeight = container.clientHeight - headerHeight - TABLE_PAGE_SIZE_BUFFER;
-  if (availableHeight <= 0 || rowHeight <= 0) return fallback;
-
-  return Math.max(1, Math.floor(availableHeight / rowHeight));
-}
-
 function measureStableAutoPageSize(container: HTMLDivElement | null, fallback: number, currentPageSize: number) {
   if (!container) return fallback;
 
