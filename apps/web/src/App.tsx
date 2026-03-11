@@ -119,10 +119,13 @@ function measureStableAutoPageSize(container: HTMLDivElement | null, fallback: n
   if (availableHeight <= 0 || rowHeight <= 0) return fallback;
 
   const estimatedPageSize = Math.max(1, Math.floor(availableHeight / rowHeight));
-  const hasVerticalOverflow = container.scrollHeight - container.clientHeight > 1;
+  const renderedRowsHeight = renderedDataRows.reduce((sum, row) => {
+    return sum + Math.ceil(row.getBoundingClientRect().height || rowHeight);
+  }, 0);
+  const hasVerticalOverflow = renderedRowsHeight > availableHeight + 1 || container.scrollHeight - container.clientHeight > 1;
   if (hasVerticalOverflow) return Math.max(1, Math.min(estimatedPageSize, currentPageSize - 1));
 
-  const spareHeight = container.clientHeight - container.scrollHeight;
+  const spareHeight = availableHeight - renderedRowsHeight;
   if (estimatedPageSize > currentPageSize && spareHeight >= rowHeight - 1) {
     const growth = Math.max(1, Math.floor((spareHeight + 1) / rowHeight));
     return Math.min(estimatedPageSize, currentPageSize + growth);
