@@ -501,6 +501,10 @@ th {
   border-radius: 16px;
   padding: 12px;
   box-shadow: 0 34px 74px rgba(0, 0, 0, 0.52);
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .modal-head {
@@ -513,6 +517,15 @@ th {
 .modal-head h4 {
   margin: 0;
   font-family: 'Rajdhani', 'Manrope', sans-serif;
+}
+
+.modal-card .form {
+  min-height: 0;
+  overflow: auto;
+}
+
+.modal-card .table-wrap {
+  max-height: min(52vh, 520px);
 }
 
 .toast-wrap {
