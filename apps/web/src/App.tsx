@@ -692,7 +692,7 @@ export function App() {
 
       <main className="content">
         {tab === 'sku' && (
-          <section className="panel">
+          <section className="panel panel-sku">
             <div className="toolbar">
               <div>
                 <h3>SKU 主数据</h3>
@@ -702,65 +702,71 @@ export function App() {
                 {isAdmin && <><button onClick={() => setModal('category')}>新增分类</button><button onClick={() => setModal('sku')}>新增SKU</button></>}
               </div>
             </div>
-            <div className="table-wrap">
-              <table>
-                <thead><tr><th>SKU编号</th><th>产品名称</th><th>分类</th><th>产品型号/规格</th><th>单位</th><th>状态</th>{isAdmin && <th>操作</th>}</tr></thead>
-                <tbody>
-                  {pagedSkuRows.map((item) => (
-                    <tr key={item.id}>
-                      <td>{item.sku}</td><td>{item.name}</td><td>{item.category_name}</td><td>{item.spec || '-'}</td><td>{item.unit}</td><td>{item.status}</td>
-                      {isAdmin && (
-                        <td>
-                          <button className="text-btn" onClick={() => openSkuEditor(item)}>编辑</button>
-                          <button className="text-btn" onClick={() => void loadInventoryDetail(item.id)}>库存详情</button>
-                          <button className="text-btn danger" onClick={() => void deleteSku(item)}>删除</button>
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                  {skuRows.length === 0 && <tr><td colSpan={isAdmin ? 7 : 6} className="empty-cell">暂无SKU数据</td></tr>}
-                </tbody>
-              </table>
+            <div className="split-panels split-panels-sku">
+              <div className="data-card">
+                <h4 className="section-title">SKU 列表</h4>
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>SKU编号</th><th>产品名称</th><th>分类</th><th>产品型号/规格</th><th>单位</th><th>状态</th>{isAdmin && <th>操作</th>}</tr></thead>
+                    <tbody>
+                      {pagedSkuRows.map((item) => (
+                        <tr key={item.id}>
+                          <td>{item.sku}</td><td>{item.name}</td><td>{item.category_name}</td><td>{item.spec || '-'}</td><td>{item.unit}</td><td>{item.status}</td>
+                          {isAdmin && (
+                            <td>
+                              <button className="text-btn" onClick={() => openSkuEditor(item)}>编辑</button>
+                              <button className="text-btn" onClick={() => void loadInventoryDetail(item.id)}>库存详情</button>
+                              <button className="text-btn danger" onClick={() => void deleteSku(item)}>删除</button>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                      {skuRows.length === 0 && <tr><td colSpan={isAdmin ? 7 : 6} className="empty-cell">暂无SKU数据</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+                <Pager
+                  total={skuRows.length}
+                  page={skuCurrentPage}
+                  pageCount={skuPageCount}
+                  pageSize={SKU_PAGE_SIZE}
+                  onPageChange={setSkuPage}
+                  fixedPageSize
+                />
+              </div>
+              <div className="data-card">
+                <h4 className="section-title">分类列表</h4>
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>序号</th><th>分类名称</th><th>上级分类</th>{isAdmin && <th>操作</th>}</tr></thead>
+                    <tbody>
+                      {pagedCategoryRows.map((cat, idx) => (
+                        <tr key={cat.id}>
+                          <td>{(categoryCurrentPage - 1) * CATEGORY_PAGE_SIZE + idx + 1}</td>
+                          <td>{cat.name}</td>
+                          <td>{cat.parent_id ? (categoryById.get(cat.parent_id)?.name || '-') : '-'}</td>
+                          {isAdmin && <td><button className="text-btn danger" onClick={() => void deleteCategory(cat)}>删除</button></td>}
+                        </tr>
+                      ))}
+                      {categories.length === 0 && <tr><td colSpan={isAdmin ? 4 : 3} className="empty-cell">暂无分类数据</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+                <Pager
+                  total={categories.length}
+                  page={categoryCurrentPage}
+                  pageCount={categoryPageCount}
+                  pageSize={CATEGORY_PAGE_SIZE}
+                  onPageChange={setCategoryPage}
+                  fixedPageSize
+                />
+              </div>
             </div>
-            <Pager
-              total={skuRows.length}
-              page={skuCurrentPage}
-              pageCount={skuPageCount}
-              pageSize={SKU_PAGE_SIZE}
-              onPageChange={setSkuPage}
-              fixedPageSize
-            />
-
-            <h4 className="section-title">分类列表</h4>
-            <div className="table-wrap">
-              <table>
-                <thead><tr><th>序号</th><th>分类名称</th><th>上级分类</th>{isAdmin && <th>操作</th>}</tr></thead>
-                <tbody>
-                  {pagedCategoryRows.map((cat, idx) => (
-                    <tr key={cat.id}>
-                      <td>{(categoryCurrentPage - 1) * CATEGORY_PAGE_SIZE + idx + 1}</td>
-                      <td>{cat.name}</td>
-                      <td>{cat.parent_id ? (categoryById.get(cat.parent_id)?.name || '-') : '-'}</td>
-                      {isAdmin && <td><button className="text-btn danger" onClick={() => void deleteCategory(cat)}>删除</button></td>}
-                    </tr>
-                  ))}
-                  {categories.length === 0 && <tr><td colSpan={isAdmin ? 4 : 3} className="empty-cell">暂无分类数据</td></tr>}
-                </tbody>
-              </table>
-            </div>
-            <Pager
-              total={categories.length}
-              page={categoryCurrentPage}
-              pageCount={categoryPageCount}
-              pageSize={CATEGORY_PAGE_SIZE}
-              onPageChange={setCategoryPage}
-              fixedPageSize
-            />
           </section>
         )}
 
         {tab === 'inventory' && (
-          <section className="panel">
+          <section className="panel panel-inventory">
             <div className="toolbar">
               <div>
                 <h3>库存台账</h3>
@@ -782,7 +788,7 @@ export function App() {
             </div>
 
             {!selectedInventoryProductId && (
-              <>
+              <div className="inventory-layout">
                 <div className="filter-panel">
                   <div className="filter-grid">
                     <div className="filter-field">
@@ -874,18 +880,18 @@ export function App() {
                     </tbody>
                   </table>
                 </div>
-            <Pager
-              total={inventoryFilteredRows.length}
-              page={inventoryCurrentPage}
-              pageCount={inventoryPageCount}
-              pageSize={INVENTORY_PAGE_SIZE}
-              onPageChange={setInventoryPage}
-              fixedPageSize
-            />
-              </>
+                <Pager
+                  total={inventoryFilteredRows.length}
+                  page={inventoryCurrentPage}
+                  pageCount={inventoryPageCount}
+                  pageSize={INVENTORY_PAGE_SIZE}
+                  onPageChange={setInventoryPage}
+                  fixedPageSize
+                />
+              </div>
             )}
             {selectedInventoryProductId && selectedInventoryProduct && selectedInventoryBalance && (
-              <>
+              <div className="inventory-detail">
                 <div className="detail-head">
                   <button className="back-btn" onClick={() => { setSelectedInventoryProductId(null); setInventoryTransactions([]); }}>返回库存列表</button>
                   <strong>SKU库存详情：{selectedInventoryProduct.sku}</strong>
@@ -952,7 +958,7 @@ export function App() {
                     </tbody>
                   </table>
                 </div>
-              </>
+              </div>
             )}
           </section>
         )}
