@@ -17,9 +17,10 @@ type Tab = 'sku' | 'inventory' | 'projects' | 'users';
 type NumInput = '' | number;
 type Toast = { id: number; type: 'ok' | 'error'; text: string };
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
-const SKU_PAGE_SIZE = 15;
-const CATEGORY_PAGE_SIZE = 10;
+const DEFAULT_SKU_PAGE_SIZE = 15;
+const DEFAULT_CATEGORY_PAGE_SIZE = 10;
 const INVENTORY_PAGE_SIZE = 25;
+const TABLE_ROW_HEIGHT_FALLBACK = 36;
 
 type ModalType =
   | null
@@ -99,6 +100,54 @@ function inventoryTxStatusLabel(tx: InventoryTransaction) {
   if (tx.operation_type === 'EDIT_ADJUST') return '修正记录';
   if (tx.superseded_by_tx_id) return '已编辑';
   return '有效';
+}
+
+function measureAutoPageSize(container: HTMLDivElement | null, fallback: number) {
+  if (!container) return fallback;
+
+  const headerRow = container.querySelector('thead tr');
+  const bodyRows = Array.from(container.querySelectorAll('tbody tr'));
+  const sampleRow =
+    bodyRows.find((row) =>
+      Array.from(row.querySelectorAll('td')).some((cell) => !cell.classList.contains('empty-cell')),
+    ) || null;
+
+  const headerHeight = headerRow?.getBoundingClientRect().height ?? 0;
+  const rowHeight = sampleRow?.getBoundingClientRect().height ?? TABLE_ROW_HEIGHT_FALLBACK;
+  const availableHeight = container.clientHeight - headerHeight;
+  if (availableHeight <= 0 || rowHeight <= 0) return fallback;
+
+  return Math.max(1, Math.floor(availableHeight / rowHeight));
+}
+
+function useAutoPageSize(fallback: number, deps: readonly unknown[]) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [pageSize, setPageSize] = useState(fallback);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const syncPageSize = () => {
+      const next = measureAutoPageSize(container, fallback);
+      setPageSize((prev) => (prev === next ? prev : next));
+    };
+
+    syncPageSize();
+
+    const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(syncPageSize) : null;
+    resizeObserver?.observe(container);
+    const table = container.querySelector('table');
+    if (table) resizeObserver?.observe(table);
+
+    window.addEventListener('resize', syncPageSize);
+    return () => {
+      window.removeEventListener('resize', syncPageSize);
+      resizeObserver?.disconnect();
+    };
+  }, [fallback, ...deps]);
+
+  return [containerRef, pageSize] as const;
 }
 
 export function App() {
@@ -192,6 +241,8 @@ export function App() {
   const [inventoryCategoryQuery, setInventoryCategoryQuery] = useState<NumInput>('');
 
   const isAdmin = me?.role === 'admin';
+  const [skuTableRef, skuPageSize] = useAutoPageSize(DEFAULT_SKU_PAGE_SIZE, [tab, isAdmin, products.length]);
+  const [categoryTableRef, categoryPageSize] = useAutoPageSize(DEFAULT_CATEGORY_PAGE_SIZE, [tab, isAdmin, categories.length]);
   const userRows = useMemo(() => [...users].sort((a, b) => a.id - b.id), [users]);
   const skuRows = useMemo(() => [...products].sort((a, b) => a.sku.localeCompare(b.sku, 'en', { sensitivity: 'base' })), [products]);
   const inventoryRows = useMemo(() => [...inventory].sort((a, b) => a.sku.localeCompare(b.sku, 'en', { sensitivity: 'base' })), [inventory]);
@@ -267,8 +318,8 @@ export function App() {
   const isProjectMember = !!me && members.some((m) => m.user_id === me.id);
   const canEditProjectCommits = !!selectedProjectId && (isAdmin || isProjectMember);
 
-  const skuPageCount = Math.max(1, Math.ceil(skuRows.length / SKU_PAGE_SIZE));
-  const categoryPageCount = Math.max(1, Math.ceil(categories.length / CATEGORY_PAGE_SIZE));
+  const skuPageCount = Math.max(1, Math.ceil(skuRows.length / skuPageSize));
+  const categoryPageCount = Math.max(1, Math.ceil(categories.length / categoryPageSize));
   const inventoryPageCount = Math.max(1, Math.ceil(inventoryFilteredRows.length / INVENTORY_PAGE_SIZE));
   const projectPageCount = Math.max(1, Math.ceil(projectRows.length / projectPageSize));
 
@@ -278,12 +329,12 @@ export function App() {
   const projectCurrentPage = Math.min(projectPage, projectPageCount);
 
   const pagedSkuRows = useMemo(
-    () => skuRows.slice((skuCurrentPage - 1) * SKU_PAGE_SIZE, skuCurrentPage * SKU_PAGE_SIZE),
-    [skuRows, skuCurrentPage],
+    () => skuRows.slice((skuCurrentPage - 1) * skuPageSize, skuCurrentPage * skuPageSize),
+    [skuRows, skuCurrentPage, skuPageSize],
   );
   const pagedCategoryRows = useMemo(
-    () => categories.slice((categoryCurrentPage - 1) * CATEGORY_PAGE_SIZE, categoryCurrentPage * CATEGORY_PAGE_SIZE),
-    [categories, categoryCurrentPage],
+    () => categories.slice((categoryCurrentPage - 1) * categoryPageSize, categoryCurrentPage * categoryPageSize),
+    [categories, categoryCurrentPage, categoryPageSize],
   );
   const pagedInventoryRows = useMemo(
     () => inventoryFilteredRows.slice((inventoryCurrentPage - 1) * INVENTORY_PAGE_SIZE, inventoryCurrentPage * INVENTORY_PAGE_SIZE),
@@ -705,7 +756,7 @@ export function App() {
             <div className="split-panels split-panels-sku">
               <div className="data-card">
                 <h4 className="section-title">SKU 列表</h4>
-                <div className="table-wrap">
+                <div className="table-wrap" ref={skuTableRef}>
                   <table>
                     <thead><tr><th>SKU编号</th><th>产品名称</th><th>分类</th><th>产品型号/规格</th><th>单位</th><th>状态</th>{isAdmin && <th>操作</th>}</tr></thead>
                     <tbody>
@@ -729,20 +780,20 @@ export function App() {
                   total={skuRows.length}
                   page={skuCurrentPage}
                   pageCount={skuPageCount}
-                  pageSize={SKU_PAGE_SIZE}
+                  pageSize={skuPageSize}
                   onPageChange={setSkuPage}
                   fixedPageSize
                 />
               </div>
               <div className="data-card">
                 <h4 className="section-title">分类列表</h4>
-                <div className="table-wrap">
+                <div className="table-wrap" ref={categoryTableRef}>
                   <table>
                     <thead><tr><th>序号</th><th>分类名称</th><th>上级分类</th>{isAdmin && <th>操作</th>}</tr></thead>
                     <tbody>
                       {pagedCategoryRows.map((cat, idx) => (
                         <tr key={cat.id}>
-                          <td>{(categoryCurrentPage - 1) * CATEGORY_PAGE_SIZE + idx + 1}</td>
+                          <td>{(categoryCurrentPage - 1) * categoryPageSize + idx + 1}</td>
                           <td>{cat.name}</td>
                           <td>{cat.parent_id ? (categoryById.get(cat.parent_id)?.name || '-') : '-'}</td>
                           {isAdmin && <td><button className="text-btn danger" onClick={() => void deleteCategory(cat)}>删除</button></td>}
@@ -756,7 +807,7 @@ export function App() {
                   total={categories.length}
                   page={categoryCurrentPage}
                   pageCount={categoryPageCount}
-                  pageSize={CATEGORY_PAGE_SIZE}
+                  pageSize={categoryPageSize}
                   onPageChange={setCategoryPage}
                   fixedPageSize
                 />
