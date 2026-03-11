@@ -121,19 +121,33 @@ function measureAutoPageSize(container: HTMLDivElement | null, fallback: number)
   return Math.max(1, Math.floor(availableHeight / rowHeight));
 }
 
-function measureSettledAutoPageSize(container: HTMLDivElement | null, fallback: number) {
-  const estimated = measureAutoPageSize(container, fallback);
-  if (!container) return estimated;
+function measureStableAutoPageSize(container: HTMLDivElement | null, fallback: number, currentPageSize: number) {
+  if (!container) return fallback;
 
-  const hasVerticalOverflow = container.scrollHeight - container.clientHeight > 1;
-  if (!hasVerticalOverflow) return estimated;
-
-  const dataRows = Array.from(container.querySelectorAll('tbody tr')).filter((row) =>
+  const headerRow = container.querySelector('thead tr');
+  const bodyRows = Array.from(container.querySelectorAll('tbody tr'));
+  const renderedDataRows = bodyRows.filter((row) =>
     Array.from(row.querySelectorAll('td')).some((cell) => !cell.classList.contains('empty-cell')),
   );
-  if (dataRows.length <= 1) return 1;
+  const sampleRow = renderedDataRows[0] || null;
 
-  return Math.max(1, Math.min(estimated, dataRows.length - 1));
+  const headerHeight = Math.ceil(headerRow?.getBoundingClientRect().height ?? 0);
+  const rowHeight = Math.ceil(sampleRow?.getBoundingClientRect().height ?? TABLE_ROW_HEIGHT_FALLBACK);
+  const availableHeight = container.clientHeight - headerHeight - TABLE_PAGE_SIZE_BUFFER;
+  if (availableHeight <= 0 || rowHeight <= 0) return fallback;
+
+  const estimatedPageSize = Math.max(1, Math.floor(availableHeight / rowHeight));
+  const hasVerticalOverflow = container.scrollHeight - container.clientHeight > 1;
+  if (hasVerticalOverflow) return Math.max(1, Math.min(estimatedPageSize, currentPageSize - 1));
+
+  const spareHeight = container.clientHeight - container.scrollHeight;
+  if (estimatedPageSize > currentPageSize && spareHeight >= rowHeight - 1) {
+    const growth = Math.max(1, Math.floor((spareHeight + 1) / rowHeight));
+    return Math.min(estimatedPageSize, currentPageSize + growth);
+  }
+
+  if (estimatedPageSize < currentPageSize) return estimatedPageSize;
+  return currentPageSize;
 }
 
 function useAutoPageSize(fallback: number, deps: readonly unknown[]) {
@@ -147,7 +161,7 @@ function useAutoPageSize(fallback: number, deps: readonly unknown[]) {
 
     let frameId = 0;
     const syncPageSize = () => {
-      const next = measureAutoPageSize(container, fallback);
+      const next = measureStableAutoPageSize(container, fallback, pageSizeRef.current);
       if (pageSizeRef.current !== next) {
         pageSizeRef.current = next;
         setPageSize(next);
@@ -156,7 +170,7 @@ function useAutoPageSize(fallback: number, deps: readonly unknown[]) {
       if (frameId) window.cancelAnimationFrame(frameId);
       frameId = window.requestAnimationFrame(() => {
         frameId = 0;
-        const settled = measureSettledAutoPageSize(container, fallback);
+        const settled = measureStableAutoPageSize(container, fallback, pageSizeRef.current);
         if (pageSizeRef.current !== settled) {
           pageSizeRef.current = settled;
           setPageSize(settled);
